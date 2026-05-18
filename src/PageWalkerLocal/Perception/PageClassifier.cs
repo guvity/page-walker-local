@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using PageWalkerLocal.Core;
+using PageWalkerLocal.Windowing;
 
 namespace PageWalkerLocal.Perception;
 
