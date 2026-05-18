@@ -118,6 +118,9 @@ public static class RuntimePermissionDiagnostics
         {
             files.AddRange(EnumerateFiles(root, "onnxruntime*.dll"));
             files.AddRange(EnumerateFiles(root, "SkiaSharp*.dll"));
+            files.AddRange(EnumerateFiles(root, "msvcp140*.dll"));
+            files.AddRange(EnumerateFiles(root, "vcruntime140*.dll"));
+            files.AddRange(EnumerateFiles(root, "concrt140*.dll"));
             var nativeRoot = Path.Combine(root, "runtimes", "win-x64", "native");
             if (Directory.Exists(nativeRoot))
             {

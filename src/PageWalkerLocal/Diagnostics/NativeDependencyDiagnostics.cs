@@ -19,6 +19,8 @@ public sealed record NativeDependencyReport(
     bool OnnxRuntimeDllExistsInBaseDirectory,
     IReadOnlyList<NativeDependencyFileStatus> OnnxRuntimeDllsUnderBaseDirectory,
     IReadOnlyList<NativeDependencyFileStatus> OnnxRuntimeDllsUnderCurrentDirectory,
+    IReadOnlyList<NativeDependencyFileStatus> VcRuntimeDllsUnderBaseDirectory,
+    IReadOnlyList<NativeDependencyFileStatus> VcRuntimeDllsUnderCurrentDirectory,
     bool OnnxRuntimeAssemblyLoaded,
     bool SessionOptionsSucceeded,
     string? ExceptionType,
@@ -37,10 +39,14 @@ public static class NativeDependencyDiagnostics
     {
         var baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
         var currentDirectory = Path.GetFullPath(Directory.GetCurrentDirectory());
-        var baseDlls = FindDlls(baseDirectory);
+        var baseDlls = FindDlls(baseDirectory, "onnxruntime*.dll");
         var currentDlls = string.Equals(baseDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase)
             ? Array.Empty<NativeDependencyFileStatus>()
-            : FindDlls(currentDirectory);
+            : FindDlls(currentDirectory, "onnxruntime*.dll");
+        var baseVcRuntimeDlls = FindVcRuntimeDlls(baseDirectory);
+        var currentVcRuntimeDlls = string.Equals(baseDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase)
+            ? Array.Empty<NativeDependencyFileStatus>()
+            : FindVcRuntimeDlls(currentDirectory);
 
         var assemblyLoaded = AppDomain.CurrentDomain.GetAssemblies()
             .Any(assembly => string.Equals(assembly.GetName().Name, "Microsoft.ML.OnnxRuntime", StringComparison.OrdinalIgnoreCase));
@@ -76,6 +82,8 @@ public static class NativeDependencyDiagnostics
             File.Exists(Path.Combine(baseDirectory, "onnxruntime.dll")),
             baseDlls,
             currentDlls,
+            baseVcRuntimeDlls,
+            currentVcRuntimeDlls,
             assemblyLoaded,
             sessionOptionsSucceeded,
             exceptionType,
@@ -117,8 +125,23 @@ public static class NativeDependencyDiagnostics
             logger.Info($"ONNX Runtime DLL under current directory: {dll.Path} ({dll.Length} bytes), readable={YesNo(dll.IsReadable)}");
         }
 
+        foreach (var dll in report.VcRuntimeDllsUnderBaseDirectory)
+        {
+            logger.Info($"MSVC runtime DLL under output: {dll.Path} ({dll.Length} bytes), readable={YesNo(dll.IsReadable)}");
+        }
+
+        foreach (var dll in report.VcRuntimeDllsUnderCurrentDirectory)
+        {
+            logger.Info($"MSVC runtime DLL under current directory: {dll.Path} ({dll.Length} bytes), readable={YesNo(dll.IsReadable)}");
+        }
+
         if (!report.SessionOptionsSucceeded)
         {
+            if (!HasRequiredVcRuntime(report.VcRuntimeDllsUnderBaseDirectory))
+            {
+                logger.Error("App-local MSVC runtime DLLs are incomplete. The portable artifact should include msvcp140.dll, vcruntime140.dll, and vcruntime140_1.dll next to PageWalkerLocal.exe.");
+            }
+
             logger.Error($"ONNX Runtime SessionOptions failed. Type={report.ExceptionType}, HResult=0x{report.HResult.GetValueOrDefault():X8}, Message={report.ExceptionMessage}");
             if (!string.IsNullOrWhiteSpace(report.StackTrace))
             {
@@ -127,7 +150,7 @@ public static class NativeDependencyDiagnostics
         }
     }
 
-    private static NativeDependencyFileStatus[] FindDlls(string root)
+    private static NativeDependencyFileStatus[] FindDlls(string root, string pattern)
     {
         if (!Directory.Exists(root))
         {
@@ -136,7 +159,7 @@ public static class NativeDependencyDiagnostics
 
         try
         {
-            return Directory.EnumerateFiles(root, "onnxruntime*.dll", SearchOption.AllDirectories)
+            return Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories)
                 .Select(path => new FileInfo(path))
                 .Select(info => new NativeDependencyFileStatus(info.FullName, info.Length, FileSystemAccess.CanReadFile(info.FullName)))
                 .OrderBy(status => status.Path, StringComparer.OrdinalIgnoreCase)
@@ -146,6 +169,27 @@ public static class NativeDependencyDiagnostics
         {
             return [];
         }
+    }
+
+    private static NativeDependencyFileStatus[] FindVcRuntimeDlls(string root)
+    {
+        var patterns = new[] { "msvcp140*.dll", "vcruntime140*.dll", "concrt140*.dll" };
+        return patterns
+            .SelectMany(pattern => FindDlls(root, pattern))
+            .DistinctBy(status => status.Path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(status => status.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool HasRequiredVcRuntime(IReadOnlyList<NativeDependencyFileStatus> dlls)
+    {
+        var names = dlls
+            .Where(dll => dll.IsReadable)
+            .Select(dll => Path.GetFileName(dll.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return names.Contains("msvcp140.dll")
+            && names.Contains("vcruntime140.dll")
+            && names.Contains("vcruntime140_1.dll");
     }
 
     private static IReadOnlyList<string> RelevantPathEntries()

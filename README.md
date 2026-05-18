@@ -159,7 +159,7 @@ Use this command to diagnose ONNX Runtime and run one isolated RapidOCR smoke te
 PageWalkerLocal.exe --ocr-self-test
 ```
 
-An ONNX Runtime native initialization failure usually means `onnxruntime.dll` or one of its native dependencies could not load. Check that `onnxruntime*.dll` files are present in the artifact, readable by the current user, compatible with Windows x64, and that the target machine has the Visual C++ Redistributable x64 installed.
+An ONNX Runtime native initialization failure usually means `onnxruntime.dll` or one of its native dependencies could not load. The GitHub Actions artifact now copies the MSVC runtime DLLs next to `PageWalkerLocal.exe` for app-local native loading. Check that `onnxruntime*.dll`, `msvcp140*.dll`, and `vcruntime140*.dll` files are present in the artifact, readable by the current user, and compatible with Windows x64. If a manually assembled folder omits those DLLs, install/repair the Visual C++ Redistributable x64 or use the GitHub Actions artifact.
 
 To run in limited mode while diagnosing OCR, disable OCR:
 

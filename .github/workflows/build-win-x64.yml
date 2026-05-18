@@ -32,6 +32,43 @@ jobs:
       - name: Publish self-contained win-x64
         run: dotnet publish src/PageWalkerLocal/PageWalkerLocal.csproj -c Release -r win-x64 --self-contained true -o artifacts/PageWalkerLocal-win-x64
 
+      - name: Copy MSVC runtime for app-local native dependencies
+        shell: pwsh
+        run: |
+          $artifact = "artifacts/PageWalkerLocal-win-x64"
+          $vs2022Root = Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022"
+          if (-not (Test-Path $vs2022Root)) {
+            Write-Error "Visual Studio 2022 redist root was not found at '$vs2022Root'."
+            exit 1
+          }
+
+          $crtDir = Get-ChildItem -Path $vs2022Root -Recurse -Directory -Filter "Microsoft.VC*.CRT" |
+            Where-Object { $_.FullName -match "\\VC\\Redist\\MSVC\\[^\\]+\\x64\\Microsoft\.VC\d+\.CRT$" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+          if (-not $crtDir) {
+            Write-Error "Could not find an x64 Microsoft.VC*.CRT redist directory under '$vs2022Root'."
+            exit 1
+          }
+
+          Write-Host "Copying MSVC CRT runtime DLLs from '$($crtDir.FullName)' to '$artifact'."
+          Copy-Item -Path (Join-Path $crtDir.FullName "*.dll") -Destination $artifact -Force
+
+          $required = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+          foreach ($name in $required) {
+            $path = Join-Path $artifact $name
+            if (-not (Test-Path $path)) {
+              Write-Error "Required app-local MSVC runtime DLL is missing after copy: $name"
+              exit 1
+            }
+          }
+
+          Get-ChildItem $artifact -File |
+            Where-Object { $_.Name -match "^(msvcp140|vcruntime140|concrt140)" } |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize
+
       - name: Print native dependency files
         shell: pwsh
         run: |
@@ -46,6 +83,18 @@ jobs:
 
           Write-Host "SkiaSharp DLLs:"
           Get-ChildItem -Recurse $artifact -Filter "SkiaSharp*.dll" | Select-Object FullName, Length | Format-Table -AutoSize
+
+          Write-Host "MSVC runtime DLLs:"
+          $msvc = Get-ChildItem $artifact -File |
+            Where-Object { $_.Name -match "^(msvcp140|vcruntime140|concrt140)" } |
+            Select-Object FullName, Length
+          $msvc | Format-Table -AutoSize
+          foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+            if (-not (Test-Path (Join-Path $artifact $name))) {
+              Write-Error "Required app-local MSVC runtime DLL is missing from artifact: $name"
+              exit 1
+            }
+          }
 
           Write-Host "Native/runtimes DLLs:"
           Get-ChildItem -Recurse $artifact -Filter "*.dll" |
