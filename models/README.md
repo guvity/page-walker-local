@@ -2,10 +2,10 @@
 
 Model files are not committed to this repository.
 
-OCR uses the `RapidOcrNet` bundled PP-OCRv5 latin model set by default. Custom OCR models can be placed under:
+OCR uses automatic read-only discovery when `ocr.modelsPath` is `auto`. Custom OCR models can be placed under any `models` subfolder, for example:
 
 ```text
-models/ocr/
+models/v5/
 ```
 
 For a custom OCR model set, provide:
@@ -20,6 +20,8 @@ Optional local LLM GGUF files should be placed manually under:
 ```text
 models/llm/
 ```
+
+The program may read these files from a read-only portable program directory. It must not write indexes, caches, or generated files next to models; writable runtime data belongs under `%LOCALAPPDATA%\PageWalkerLocal\`.
 
 Suggested small local models:
 

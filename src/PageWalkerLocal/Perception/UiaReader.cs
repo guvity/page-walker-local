@@ -13,6 +13,8 @@ public sealed class UiaReader
     private readonly AppLogger _logger;
     private bool _warned;
 
+    public bool LastReadFailed { get; private set; }
+
     public UiaReader(AppLogger logger)
     {
         _logger = logger;
@@ -22,6 +24,7 @@ public sealed class UiaReader
     {
         try
         {
+            LastReadFailed = false;
             using var automation = new UIA3Automation();
             var root = automation.FromHandle(window.Handle);
             var candidates = new List<CandidateElement>();
@@ -43,7 +46,8 @@ public sealed class UiaReader
         }
         catch (Exception ex) when (ex is InvalidOperationException or COMException or UnauthorizedAccessException)
         {
-            WarnOnce($"FlaUI UIA tree read failed: {ex.Message}");
+            LastReadFailed = true;
+            WarnUiaFailure($"FlaUI UIA tree read failed: {ex.Message}");
             return Task.FromResult<IReadOnlyList<CandidateElement>>(Fallback(window));
         }
     }
@@ -199,7 +203,7 @@ public sealed class UiaReader
         return string.Join(" | ", parts);
     }
 
-    private void WarnOnce(string message)
+    private void WarnUiaFailure(string message)
     {
         if (_warned)
         {
@@ -207,6 +211,7 @@ public sealed class UiaReader
         }
 
         _logger.Warning(message);
+        _logger.Warning("UIA failed for this Chromium window. Continuing with OCR-only perception.");
         _warned = true;
     }
 }

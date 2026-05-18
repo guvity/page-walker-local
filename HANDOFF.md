@@ -1,161 +1,186 @@
 # PageWalkerLocal Handoff
 
-Date: 2026-05-18  
-Repository: `guvity/page-walker-local`  
-Working branch: `codex/phase-2-real-ocr-llm`  
-Latest Phase 2 code commit with successful build: `e6f8208adedad28b337dedbf67a48d143b2fc477`
+Date: 2026-05-18 21:02:36 +02:00
+Repository: `guvity/page-walker-local`
+Working branch: `codex/phase-2-fix-ocr-runtime-auto-models`
+Base branch: `codex/phase-2-real-ocr-llm`
 
-## 1. Git Status
+## Summary
 
-Local command attempted:
+This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 
-```powershell
-git status --short --branch
+- Added read-only model discovery for RapidOCR ONNX sets and LLamaSharp GGUF models.
+- Added ONNX Runtime native diagnostics and runtime permission diagnostics.
+- Added `--model-discovery-test` and `--ocr-self-test`.
+- Expanded writable runtime directories under `%LOCALAPPDATA%\PageWalkerLocal\`.
+- Updated the Windows x64 GitHub Actions workflow to run on `codex/**`, print native DLLs, fail if `onnxruntime*.dll` is missing, and run the new self-tests.
+- Updated README, sample config, schema, and model docs.
+
+## Files Added
+
+- `src/PageWalkerLocal/Core/FileSystemAccess.cs`
+- `src/PageWalkerLocal/Core/ModelDiscovery.cs`
+- `src/PageWalkerLocal/Core/CliSelfTests.cs`
+- `src/PageWalkerLocal/Diagnostics/NativeDependencyDiagnostics.cs`
+- `src/PageWalkerLocal/Diagnostics/RuntimePermissionDiagnostics.cs`
+
+## Files Changed
+
+- `.github/workflows/build-win-x64.yml`
+- `README.md`
+- `models/README.md`
+- `samples/appsettings.sample.json`
+- `src/PageWalkerLocal/appsettings.json`
+- `src/PageWalkerLocal/appsettings.schema.json`
+- `src/PageWalkerLocal/Core/AppConfig.cs`
+- `src/PageWalkerLocal/Core/RuntimePaths.cs`
+- `src/PageWalkerLocal/Core/Runner.cs`
+- `src/PageWalkerLocal/Perception/RapidOcrEngine.cs`
+- `src/PageWalkerLocal/Perception/UiaReader.cs`
+- `src/PageWalkerLocal/Brain/LocalLlmBrain.cs`
+- `src/PageWalkerLocal/Diagnostics/DecisionLogWriter.cs`
+- `src/PageWalkerLocal/Diagnostics/HtmlReportWriter.cs`
+- `src/PageWalkerLocal/Program.cs`
+
+## OCR Model Discovery
+
+Default config is now:
+
+```json
+"ocr": {
+  "enabled": true,
+  "engine": "RapidOCR",
+  "modelsPath": "auto"
+}
 ```
 
-Result: failed because `git` is not installed or not available in `PATH` in the current Codex workspace.
+`ModelDiscovery` searches read-only under:
 
-Because local `git status` is unavailable, branch state was checked through GitHub compare:
+- `AppContext.BaseDirectory\models`
+- `Directory.GetCurrentDirectory()\models`
+- `%LOCALAPPDATA%\PageWalkerLocal\models`
+- configured `modelsRoot`, if not `auto` or empty
 
-- `codex/phase-2-real-ocr-llm` is ahead of `main` by 3 commits.
-- `codex/phase-2-real-ocr-llm` is behind `main` by 0 commits.
-- Compare base: `3f87648984b28ade87a755c8e8bd2720bac75d95`
-- Successful Phase 2 head: `e6f8208adedad28b337dedbf67a48d143b2fc477`
+A valid RapidOCR set requires all files in the same directory:
 
-## 2. What Has Been Done
+- `*.onnx` filename containing `det`
+- `*.onnx` filename containing `cls`
+- `*.onnx` filename containing `rec`
+- `*.txt` filename containing `dict` or `keys`
 
-Phase 1 created the portable Windows x64 .NET 8 application skeleton with dry-run-first safety, active-window/rectangle modes, Win32 `SendInput`, basic rule planning, screenshots, runtime paths, logs, diagnostics, and a GitHub Actions publish workflow.
+Selection prefers paths or filenames with `v5`, then `PP-OCRv5`/`ppocrv5`, then `latin`, then deterministic path order. The selected det/cls/rec/dict paths are logged explicitly. If no set is found, RapidOcrNet bundled/default init is tried; failure falls back to limited OCR mode without crashing.
 
-Phase 2 added real buildable components for:
+## LLM Model Discovery
 
-- Offline OCR through `RapidOcrNet`.
-- Deeper FlaUI UI Automation tree traversal.
-- Local LLamaSharp GGUF decision brain with fallback to deterministic rules.
-- Allowed-action generation so the model cannot invent coordinates.
-- Form filling from configured `testFormData` only.
-- Best-effort URL/domain safety.
-- Navigation memory and loop prevention.
-- Best-effort tab tracking through UIA tab counts.
-- Safer human-like mouse path validation and scroll positioning.
+Default config is now:
 
-No local build was run. The project was built only through GitHub Actions.
+```json
+"localBrain": {
+  "enabled": false,
+  "provider": "LLamaSharp",
+  "modelPath": "auto",
+  "maxTokens": 160,
+  "temperature": 0.2,
+  "strictJson": true,
+  "minConfidence": 0.65
+}
+```
 
-## 3. Changed Files And Why
+When `localBrain.enabled=true` and `modelPath` is `auto`, empty, missing, or a relative path that does not exist, `ModelDiscovery` searches for `*.gguf` under:
 
-Compared with `main`, these files changed in `codex/phase-2-real-ocr-llm`:
+- `AppContext.BaseDirectory\models\llm`
+- `AppContext.BaseDirectory\models`
+- `Directory.GetCurrentDirectory()\models\llm`
+- `%LOCALAPPDATA%\PageWalkerLocal\models\llm`
+- configured `modelsRoot` and `modelsRoot\llm`
 
-- `README.md` - updated status/docs for Phase 2 OCR, UIA, local LLM, and tab tracking behavior.
-- `models/README.md` - documented bundled RapidOcrNet defaults and custom OCR/LLM model placement.
-- `src/PageWalkerLocal/PageWalkerLocal.csproj` - added `RapidOcrNet`, `LLamaSharp.Backend.Cpu`, and `SkiaSharp.NativeAssets.Win32` packages.
-- `src/PageWalkerLocal/Windowing/Bounds.cs` - added point clamping for safe mouse target/path handling.
-- `src/PageWalkerLocal/Perception/CandidateElement.cs` - added `Text`, `AddressBar`, and `TabItem` candidate kinds.
-- `src/PageWalkerLocal/Perception/RapidOcrEngine.cs` - replaced placeholder with real RapidOcrNet OCR returning text, line bounds, and confidence.
-- `src/PageWalkerLocal/Perception/UiaReader.cs` - replaced root-only reader with FlaUI descendant traversal and candidate extraction.
-- `src/PageWalkerLocal/Perception/PageClassifier.cs` - improved OCR line classification into link/button/text candidates.
-- `src/PageWalkerLocal/Brain/ActionPlan.cs` - added `MemoryKey` for loop prevention.
-- `src/PageWalkerLocal/Brain/AllowedActionGenerator.cs` - added generated allowed actions for local LLM/rules.
-- `src/PageWalkerLocal/Brain/BrainJsonParser.cs` - added JSON extraction and snake-case/kebab-case action parsing.
-- `src/PageWalkerLocal/Brain/BrainPromptBuilder.cs` - added allowed action details for local model prompts.
-- `src/PageWalkerLocal/Brain/IBrain.cs` - extended planner context with URL/domain information.
-- `src/PageWalkerLocal/Brain/LocalLlmBrain.cs` - implemented real LLamaSharp local GGUF loading/inference with fallback.
-- `src/PageWalkerLocal/Brain/PlannerRules.cs` - tightened forbidden text list and kept hard planner rejection authority.
-- `src/PageWalkerLocal/Brain/RuleBasedBrain.cs` - now uses generated allowed actions and supports configured form filling.
-- `src/PageWalkerLocal/Browser/BrowserStateTracker.cs` - added URL/domain extraction from UIA address bar candidates and page keys.
-- `src/PageWalkerLocal/Browser/BrowserTabTracker.cs` - added UIA tab counting and own-tab detection by count increase.
-- `src/PageWalkerLocal/Browser/NavigationMemory.cs` - added action memory marking for loop prevention.
-- `src/PageWalkerLocal/Core/Runner.cs` - wired browser snapshot, domain checks, navigation memory, tab tracking, and post-click tab count.
-- `src/PageWalkerLocal/HumanInput/HumanInteractionEngine.cs` - added safe path clamping and guaranteed cursor-in-bounds before scroll.
-- `src/PageWalkerLocal/HumanInput/SafeInputController.cs` - stopped validating the out-of-bounds starting mouse point as a target action.
-- `HANDOFF.md` - this transfer note.
+Selection prefers `qwen2.5-0.5b`, then `qwen2.5`, `smollm`, `tinyllama`, and quant names `q4_k_m`, `q4_0`, `q3_k_m`, `q5_k_m`, `q5_0`, `q8_0`, `fp16`. `fp16` is avoided when any readable non-fp16 candidate exists. If no readable GGUF is selected, the app falls back to `RuleBasedBrain`.
 
-## 4. Requirements Status
+## ONNX Runtime Diagnostics
 
-Implemented and built successfully in GitHub Actions:
+`NativeDependencyDiagnostics.CheckOnnxRuntime()` logs:
 
-- Real offline OCR dependency and `RapidOcrEngine` implementation.
-- `OcrResult.Text` and `OcrResult.Lines` with bounds/confidence.
-- UIA descendant reading for buttons, links, inputs, text, address bar candidates, and tab items.
-- Mouse path bug fix for live click paths starting outside allowed bounds.
-- Cursor is moved inside allowed bounds before scroll.
-- LLamaSharp local brain path with strict JSON parsing and fallback.
-- Allowed-action generator.
-- RuleBasedBrain form filling from `testFormData`.
-- Basic tab tracking by UIA tab count delta.
-- Best-effort URL/domain safety through UIA address bar candidates.
-- Navigation memory and loop prevention keys.
-- GitHub Actions build for Windows x64 portable artifact.
+- process architecture and OS version;
+- `AppContext.BaseDirectory` and current directory;
+- relevant `PATH` entries;
+- whether `onnxruntime.dll` exists in the output root;
+- found `onnxruntime*.dll` files under output/current directory;
+- readability of found DLL files;
+- whether `Microsoft.ML.OnnxRuntime` is loaded;
+- whether `new Microsoft.ML.OnnxRuntime.SessionOptions()` succeeds;
+- exception type, message, HResult, and stack trace on failure.
 
-Implemented as best-effort but not runtime-proven in this environment:
+When RapidOCR init fails because ONNX Runtime native initialization failed, the log now says this usually means `onnxruntime.dll` or a native dependency could not load and points at VC++ Redistributable x64, bundled DLLs, permissions, and CPU/OS compatibility.
 
-- RapidOCR runtime behavior on a real Windows desktop/RDP session.
-- Chromium UIA completeness for address bar, tabs, and page elements.
-- Local GGUF inference with actual `qwen2.5-0.5b` or `SmolLM2` model files.
-- New-tab detection when Chromium UIA does not expose tab items reliably.
-- Domain safety when URL cannot be read from UIA.
+## Read-only Program Directory
 
-Not yet fully implemented:
+`AppContext.BaseDirectory` and model directories are treated as read-only. The app may read from the portable program directory and `models`, but it must not write indexes, caches, logs, reports, temp files, or debug output there.
 
-- Ctrl+L copy/restore URL fallback.
-- Robust browser-specific tab ownership model.
-- Advanced debug overlay.
-- Full HTML report enrichment beyond action history.
-- Automated unit/integration tests.
-- Runtime smoke test on an actual Windows UI session.
+Writable runtime data goes under:
 
-## 5. Build And Test Commands Run
+- `%LOCALAPPDATA%\PageWalkerLocal\logs`
+- `%LOCALAPPDATA%\PageWalkerLocal\debug`
+- `%LOCALAPPDATA%\PageWalkerLocal\cache`
+- `%LOCALAPPDATA%\PageWalkerLocal\temp`
+- `%LOCALAPPDATA%\PageWalkerLocal\reports`
+- `%LOCALAPPDATA%\PageWalkerLocal\model-cache`
+- `%LOCALAPPDATA%\PageWalkerLocal\decision-logs`
 
-Local commands:
+If the program directory is read-only, this is logged as supported. If `%LOCALAPPDATA%\PageWalkerLocal` cannot be created or written, startup stops with a clear critical error.
 
-- `git status --short --branch` - failed: `git` command not found.
-- No local `dotnet restore`, `dotnet build`, `dotnet test`, or `dotnet publish` was run.
+## CLI Test Commands
 
-GitHub Actions workflow:
+```cmd
+PageWalkerLocal.exe --model-discovery-test
+```
+
+Runs runtime permission checks, lists model roots, OCR sets, GGUF models, selected OCR set, and selected LLM model. It does not require a browser, move the mouse, use UIA, run OCR inference, or load an LLM. It exits non-zero only if runtime user storage is not writable or discovery crashes.
+
+```cmd
+PageWalkerLocal.exe --ocr-self-test
+```
+
+Runs permission diagnostics, OCR discovery, ONNX Runtime diagnostics, RapidOCR initialization, and one tiny in-memory OCR call. Exit codes:
+
+- `0`: OCR initialized and test completed.
+- `2`: no custom OCR model set was found and bundled/default init path was used or tried.
+- `10`: ONNX Runtime native dependency failed.
+- `11`: RapidOCR `InitModels` failed.
+- `12`: OCR `Detect` failed.
+
+## UIA Runtime Behavior
+
+FlaUI `RPC_E_SERVERFAULT` and related UIA read failures remain non-fatal. The app now logs:
 
 ```text
-.github/workflows/build-win-x64.yml
+UIA failed for this Chromium window. Continuing with OCR-only perception.
 ```
 
-Workflow command run by GitHub Actions:
+If OCR is also unavailable:
 
-```powershell
-dotnet publish src/PageWalkerLocal/PageWalkerLocal.csproj -c Release -r win-x64 --self-contained true -o artifacts/PageWalkerLocal-win-x64
+```text
+Both OCR and UIA are unavailable; perception is limited to window title and static defaults.
 ```
 
-Phase 2 workflow runs:
+## Validation Notes
 
-- `26042695081` - failed on compile errors:
-  - FlaUI numeric conversion ambiguity.
-  - `ModelParams.Seed` not available in LLamaSharp 0.27.
-  - RapidOcrNet box point type mismatch.
-- `26042889167` - failed on RapidOCR bounds numeric conversion ambiguity.
-- `26043063441` - success.
+Local `dotnet build` could not run in this Codex environment because only the .NET runtime is installed and no SDK is available. `git diff --check` passed. The branch must be validated through GitHub Actions after push.
 
-Successful artifact:
+Expected workflow checks:
 
-- Name: `PageWalkerLocal-win-x64`
-- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26043063441`
-- Head SHA: `e6f8208adedad28b337dedbf67a48d143b2fc477`
-- Size: about 100 MB
-- Digest: `sha256:f93224fbaec11932e996c1b7c3fcdb824e44497b7fa043a518cb7ea6b675ed92`
+- `dotnet restore`
+- `dotnet publish` for self-contained `win-x64`
+- native DLL listing
+- fail workflow if `onnxruntime*.dll` is absent from artifact
+- `PageWalkerLocal.exe --model-discovery-test`
+- `PageWalkerLocal.exe --ocr-self-test` with exit `0` or `2` accepted
+- artifact upload
 
-## 6. Known Issues And Suspicions
+## Remaining Work and Risks
 
-- Local workspace is not a normal Git checkout, or `git` is unavailable, so ordinary local git workflow cannot be used here.
-- OCR compiles and packages, but OCR runtime quality/latency has not been tested against real screenshots.
-- `RapidOcrEngine` custom model discovery is heuristic: it looks for filenames containing `det`, `cls`, `rec`, and `dict`/`keys`.
-- UIA for Chromium can be incomplete; OCR remains the main perception source.
-- URL/domain safety currently depends on UIA exposing the address bar. If it does not, external navigation blocking is weaker.
-- Tab tracking is best-effort by visible UIA tab count. It may miss popups/windows or Chromium profiles that hide tabs from UIA.
-- LLamaSharp local brain compiles, but no GGUF model was present for runtime validation.
-- The local model prompt and JSON parsing are conservative but should be tested with the actual target GGUF models.
-- `ConsoleKey.BrowserBack` compiled in CI, but browser back behavior should be verified in live mode.
-- No automated tests exist yet.
-
-## 7. Suggested Next Steps
-
-1. Run the artifact on a Windows desktop/RDP session in dry-run mode with a normal Chromium page.
-2. Verify OCR text and bounds are written into decision logs.
-3. Verify UIA candidates include address bar and tab items on Chrome, Edge, SunBrowser, and AdsPower profiles.
-4. Add a safe URL fallback using Ctrl+L/copy/restore only when config allows clipboard interaction.
-5. Add unit tests around `AllowedActionGenerator`, `BrainJsonParser`, domain matching, and planner rejection.
-6. Add a tiny local test page/manual QA script for dry-run perception validation.
+- Confirm GitHub Actions success on this branch and update this section with run URL/artifact details.
+- Confirm target Windows machines have VC++ Redistributable x64 if ONNX Runtime native init fails.
+- Runtime OCR quality and Chromium UIA behavior still need live Windows desktop/RDP validation.
+- `ModelDiscovery` is deterministic but heuristic; unusual OCR model naming may still require explicit paths.
+- No unit tests exist yet for model selection scoring, permission probes, or CLI exit code behavior.
+- Future phase should add Ctrl+L URL fallback, richer reports, and focused unit tests around model discovery, planner safety, and domain handling.

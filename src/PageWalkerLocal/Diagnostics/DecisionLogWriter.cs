@@ -14,7 +14,7 @@ public sealed class DecisionLogWriter
     public DecisionLogWriter(RuntimePaths paths, AppConfig config)
     {
         _config = config;
-        _file = Path.Combine(paths.DebugDirectory, $"decisions-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.jsonl");
+        _file = Path.Combine(paths.DecisionLogsDirectory, $"decisions-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.jsonl");
     }
 
     public void Write(int step, PlannerContext context, PerceptionState state, ActionPlan plan, string? screenshotPath)

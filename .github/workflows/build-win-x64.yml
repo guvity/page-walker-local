@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - "codex/**"
     tags:
       - "v*"
 
@@ -30,6 +31,46 @@ jobs:
 
       - name: Publish self-contained win-x64
         run: dotnet publish src/PageWalkerLocal/PageWalkerLocal.csproj -c Release -r win-x64 --self-contained true -o artifacts/PageWalkerLocal-win-x64
+
+      - name: Print native dependency files
+        shell: pwsh
+        run: |
+          $artifact = "artifacts/PageWalkerLocal-win-x64"
+          Write-Host "onnxruntime DLLs:"
+          $onnx = Get-ChildItem -Recurse $artifact -Filter "onnxruntime*.dll" | Select-Object FullName, Length
+          $onnx | Format-Table -AutoSize
+          if (-not $onnx) {
+            Write-Error "No onnxruntime*.dll files were found in the published artifact."
+            exit 1
+          }
+
+          Write-Host "SkiaSharp DLLs:"
+          Get-ChildItem -Recurse $artifact -Filter "SkiaSharp*.dll" | Select-Object FullName, Length | Format-Table -AutoSize
+
+          Write-Host "Native/runtimes DLLs:"
+          Get-ChildItem -Recurse $artifact -Filter "*.dll" |
+            Where-Object { $_.FullName -match "native|runtimes" } |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize
+
+      - name: Run model discovery self-test
+        shell: pwsh
+        run: |
+          & artifacts/PageWalkerLocal-win-x64/PageWalkerLocal.exe --model-discovery-test
+
+      - name: Run OCR self-test
+        shell: pwsh
+        run: |
+          & artifacts/PageWalkerLocal-win-x64/PageWalkerLocal.exe --ocr-self-test
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -and $code -ne 2) {
+            Write-Error "OCR self-test failed with exit code $code."
+            exit $code
+          }
+          if ($code -eq 2) {
+            Write-Warning "OCR self-test did not find a complete custom model set; bundled/default init path was tested."
+          }
+          exit 0
 
       - name: Zip artifact
         shell: pwsh

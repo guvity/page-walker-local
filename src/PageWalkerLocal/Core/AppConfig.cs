@@ -4,6 +4,8 @@ namespace PageWalkerLocal.Core;
 
 public sealed class AppConfig
 {
+    public string ModelsRoot { get; set; } = "models";
+
     public string TargetMode { get; set; } = "ActiveWindow";
     public List<string> TargetProcessNames { get; set; } = ["chrome", "msedge", "SunBrowser", "AdsPower Global"];
     public RectangleConfig Rectangle { get; set; } = new();
@@ -48,7 +50,9 @@ public sealed class AppConfig
         if (!File.Exists(path))
         {
             logger.Warning($"Config file not found at '{path}'. Using safe defaults.");
-            return new AppConfig();
+            var defaultConfig = new AppConfig();
+            defaultConfig.Normalize(logger);
+            return defaultConfig;
         }
 
         var json = File.ReadAllText(path);
@@ -67,6 +71,7 @@ public sealed class AppConfig
     private void Normalize(AppLogger logger)
     {
         TargetMode = Is(TargetMode, "Rectangle") ? "Rectangle" : "ActiveWindow";
+        ModelsRoot = string.IsNullOrWhiteSpace(ModelsRoot) ? "models" : ModelsRoot.Trim();
         BehaviorProfile = BehaviorProfile.Trim().ToLowerInvariant() switch
         {
             "cautious" => "cautious",
@@ -81,6 +86,13 @@ public sealed class AppConfig
         MaxRuntimeSeconds = Math.Clamp(MaxRuntimeSeconds, 1, 86_400);
         RetryCount = Math.Clamp(RetryCount, 0, 20);
         RetryDelayMs = Math.Clamp(RetryDelayMs, 0, 60_000);
+        Ocr ??= new OcrOptions();
+        LocalBrain ??= new LocalBrainOptions();
+        Logging ??= new LoggingOptions();
+        Ocr.Engine = string.IsNullOrWhiteSpace(Ocr.Engine) ? "RapidOCR" : Ocr.Engine.Trim();
+        Ocr.ModelsPath = string.IsNullOrWhiteSpace(Ocr.ModelsPath) ? "auto" : Ocr.ModelsPath.Trim();
+        LocalBrain.Provider = string.IsNullOrWhiteSpace(LocalBrain.Provider) ? "LLamaSharp" : LocalBrain.Provider.Trim();
+        LocalBrain.ModelPath = string.IsNullOrWhiteSpace(LocalBrain.ModelPath) ? "auto" : LocalBrain.ModelPath.Trim();
 
         if (Rectangle.Width <= 0 || Rectangle.Height <= 0)
         {
@@ -104,14 +116,14 @@ public sealed class OcrOptions
 {
     public bool Enabled { get; set; } = true;
     public string Engine { get; set; } = "RapidOCR";
-    public string ModelsPath { get; set; } = "models/ocr";
+    public string ModelsPath { get; set; } = "auto";
 }
 
 public sealed class LocalBrainOptions
 {
     public bool Enabled { get; set; }
     public string Provider { get; set; } = "LLamaSharp";
-    public string ModelPath { get; set; } = "models/llm/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+    public string ModelPath { get; set; } = "auto";
     public int MaxTokens { get; set; } = 160;
     public double Temperature { get; set; } = 0.2;
     public bool StrictJson { get; set; } = true;

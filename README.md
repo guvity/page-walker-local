@@ -32,6 +32,11 @@ Each Windows user gets separate data:
 %LOCALAPPDATA%\PageWalkerLocal\
 %LOCALAPPDATA%\PageWalkerLocal\logs\
 %LOCALAPPDATA%\PageWalkerLocal\debug\
+%LOCALAPPDATA%\PageWalkerLocal\cache\
+%LOCALAPPDATA%\PageWalkerLocal\temp\
+%LOCALAPPDATA%\PageWalkerLocal\reports\
+%LOCALAPPDATA%\PageWalkerLocal\model-cache\
+%LOCALAPPDATA%\PageWalkerLocal\decision-logs\
 ```
 
 The app uses a per-user/per-session mutex, so one user/session cannot accidentally run conflicting copies while different Windows users can run their own copies in parallel.
@@ -106,17 +111,73 @@ Local LLM settings are disabled by default:
 
 ```json
 {
+  "modelsRoot": "models",
   "localBrain": {
     "enabled": false,
     "provider": "LLamaSharp",
-    "modelPath": "models/llm/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    "modelPath": "auto"
   }
 }
 ```
 
-Place GGUF files manually in `models/llm/`. No model files are downloaded or committed by this project.
+Place GGUF files manually in `models/llm/`. No model files are downloaded or committed by this project. When `modelPath` is `auto`, PageWalkerLocal searches for readable `.gguf` files under the portable `models` folder and the per-user `%LOCALAPPDATA%\PageWalkerLocal\models\llm` folder. If no model is found or the file cannot be read, the app falls back to `RuleBasedBrain`.
 
-OCR uses bundled `RapidOcrNet` defaults when no custom files are present. To override OCR models, place a detector ONNX, classifier ONNX, recognizer ONNX, and matching dictionary text file under `models/ocr/`.
+OCR is enabled by default but fails closed into `NullOcrEngine` if RapidOCR or ONNX Runtime cannot initialize:
+
+```json
+{
+  "ocr": {
+    "enabled": true,
+    "engine": "RapidOCR",
+    "modelsPath": "auto"
+  }
+}
+```
+
+When `modelsPath` is `auto`, PageWalkerLocal searches recursively for a complete RapidOCR set: one `det` ONNX, one `cls` ONNX, one `rec` ONNX, and one dictionary or keys text file. It prefers model sets under `v5`, with `PP-OCRv5` filenames, and then `latin` filenames.
+
+## Phase 2 OCR Runtime Troubleshooting
+
+Recommended OCR model layout:
+
+```text
+C:\PageWalkerLocal-win-x64\models\v5\ch_PP-OCRv5_mobile_det.onnx
+C:\PageWalkerLocal-win-x64\models\v5\ch_ppocr_mobile_v2.0_cls_infer.onnx
+C:\PageWalkerLocal-win-x64\models\v5\latin_PP-OCRv5_rec_mobile_infer.onnx
+C:\PageWalkerLocal-win-x64\models\v5\ppocrv5_latin_dict.txt
+```
+
+Use this command to inspect model roots, OCR sets, and GGUF candidates without opening a browser, moving the mouse, starting OCR inference, or loading an LLM:
+
+```cmd
+PageWalkerLocal.exe --model-discovery-test
+```
+
+Use this command to diagnose ONNX Runtime and run one isolated RapidOCR smoke test without UIA, browser control, mouse movement, or LLM inference:
+
+```cmd
+PageWalkerLocal.exe --ocr-self-test
+```
+
+An ONNX Runtime native initialization failure usually means `onnxruntime.dll` or one of its native dependencies could not load. Check that `onnxruntime*.dll` files are present in the artifact, readable by the current user, compatible with Windows x64, and that the target machine has the Visual C++ Redistributable x64 installed.
+
+To run in limited mode while diagnosing OCR, disable OCR:
+
+```json
+{
+  "ocr": {
+    "enabled": false
+  }
+}
+```
+
+With OCR disabled or unavailable, PageWalkerLocal continues with UI Automation, window title, and conservative static defaults.
+
+## Running from admin-created read-only program directory
+
+`C:\PageWalkerLocal-win-x64` may be created or extracted by an Administrator and then run by normal users. This is supported. PageWalkerLocal reads application files and models from the program directory, but does not write logs, caches, reports, temp files, model indexes, or debug output there.
+
+All writable runtime files go under `%LOCALAPPDATA%\PageWalkerLocal\`. If the program directory or model directory is read-only, that is normal. If OCR or LLM fails, check read permissions for model files and native DLL files. Do not grant write permissions to the program directory unless you have another operational reason to do so.
 
 ## Safety Boundaries
 

@@ -16,7 +16,7 @@ public sealed class HtmlReportWriter
 
     public string Write(ActionHistory history)
     {
-        var file = Path.Combine(_paths.DebugDirectory, $"report-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.html");
+        var file = Path.Combine(_paths.ReportsDirectory, $"report-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.html");
         var html = new StringBuilder();
         html.AppendLine("<!doctype html><html><head><meta charset=\"utf-8\"><title>PageWalkerLocal Report</title>");
         html.AppendLine("<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;line-height:1.45}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px;text-align:left}th{background:#f3f3f3}</style>");

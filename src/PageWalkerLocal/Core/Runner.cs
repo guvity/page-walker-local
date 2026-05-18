@@ -63,12 +63,16 @@ public sealed class Runner
 
     public static Runner Create(AppConfig config, RuntimePaths paths, AppLogger logger)
     {
+        var modelDiscovery = new ModelDiscovery();
         var windowFinder = new TargetWindowFinder(config, logger);
         var ruleBrain = new RuleBasedBrain(config);
-        var brain = new LocalLlmBrain(config, ruleBrain, logger);
+        var brain = new LocalLlmBrain(config, ruleBrain, paths, logger, modelDiscovery);
         var planner = new Planner(brain, new PlannerRules(config), logger);
+        var selectedOcrModelSet = config.Ocr.Enabled
+            ? modelDiscovery.SelectOcrModelSet(config, paths, logger)
+            : null;
         IOcrEngine ocr = config.Ocr.Enabled
-            ? new RapidOcrEngine(config.Ocr.ModelsPath, logger)
+            ? new RapidOcrEngine(selectedOcrModelSet, config.Ocr.ModelsPath, config.Ocr.Enabled, logger)
             : new NullOcrEngine(logger);
 
         return new Runner(
@@ -130,6 +134,11 @@ public sealed class Runner
             var screenshotPath = _screenshotDumper.Save(frame, step);
             var ocr = await _ocrEngine.ReadAsync(frame.Bitmap, frame.Bounds, cancellationToken).ConfigureAwait(false);
             var uia = await _uiaReader.ReadCandidatesAsync(target, cancellationToken).ConfigureAwait(false);
+            if (_uiaReader.LastReadFailed && !_ocrEngine.IsAvailable)
+            {
+                _logger.Warning("Both OCR and UIA are unavailable; perception is limited to window title and static defaults.");
+            }
+
             var state = _classifier.Classify(frame, target, ocr, uia);
             var browserSnapshot = _browserStateTracker.Observe(state);
             if (!BrowserStateTracker.IsCurrentDomainAllowed(browserSnapshot, _config))

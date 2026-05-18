@@ -11,7 +11,9 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
 {
     private readonly AppConfig _config;
     private readonly IBrain _fallback;
+    private readonly RuntimePaths _paths;
     private readonly AppLogger _logger;
+    private readonly ModelDiscovery _modelDiscovery;
     private readonly AllowedActionGenerator _allowedActions;
     private readonly BrainPromptBuilder _promptBuilder = new();
     private readonly BrainJsonParser _parser = new();
@@ -20,12 +22,17 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
     private ModelParams? _modelParams;
     private bool _loadFailed;
     private bool _warnedMissing;
+    private bool _statusLogged;
+    private string? _resolvedModelPath;
+    private bool _modelResolutionAttempted;
 
-    public LocalLlmBrain(AppConfig config, IBrain fallback, AppLogger logger)
+    public LocalLlmBrain(AppConfig config, IBrain fallback, RuntimePaths paths, AppLogger logger, ModelDiscovery modelDiscovery)
     {
         _config = config;
         _fallback = fallback;
+        _paths = paths;
         _logger = logger;
+        _modelDiscovery = modelDiscovery;
         _allowedActions = new AllowedActionGenerator(config);
     }
 
@@ -42,10 +49,9 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
             return ActionPlan.Stop("No allowed actions were generated.");
         }
 
-        var modelPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, _config.LocalBrain.ModelPath));
-        if (!File.Exists(modelPath))
+        var modelPath = ResolveModelPath();
+        if (string.IsNullOrWhiteSpace(modelPath))
         {
-            WarnMissing(modelPath);
             return await _fallback.DecideAsync(context, state, cancellationToken).ConfigureAwait(false);
         }
 
@@ -113,6 +119,7 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
         {
             _loadFailed = true;
             _logger.Error($"Failed to load local GGUF model at '{modelPath}'.", ex);
+            LogLlmStatus(modelPath, FileSystemAccess.CanReadFile(modelPath), "RuleBasedBrain fallback");
             return false;
         }
         finally
@@ -168,15 +175,62 @@ State:
 """ + _promptBuilder.Build(context, state, allowed) + "\nJSON:";
     }
 
-    private void WarnMissing(string modelPath)
+    private string? ResolveModelPath()
+    {
+        if (_modelResolutionAttempted)
+        {
+            return _resolvedModelPath;
+        }
+
+        _modelResolutionAttempted = true;
+        _resolvedModelPath = _modelDiscovery.SelectLlmModelPath(_config, _paths, _logger);
+        if (string.IsNullOrWhiteSpace(_resolvedModelPath))
+        {
+            WarnMissing();
+            LogLlmStatus(null, false, "RuleBasedBrain fallback");
+            return null;
+        }
+
+        var readable = FileSystemAccess.CanReadFile(_resolvedModelPath);
+        if (!readable)
+        {
+            _logger.Warning("LLM model found but is not readable by current user.");
+            _logger.Warning($"Unreadable LLM model: {_resolvedModelPath}");
+            LogLlmStatus(_resolvedModelPath, false, "RuleBasedBrain fallback");
+            _resolvedModelPath = null;
+            return null;
+        }
+
+        LogLlmStatus(_resolvedModelPath, true, "LocalLlmBrain");
+        return _resolvedModelPath;
+    }
+
+    private void WarnMissing()
     {
         if (_warnedMissing)
         {
             return;
         }
 
-        _logger.Warning($"Local LLM is enabled, but model was not found at '{modelPath}'. Falling back to RuleBasedBrain.");
+        _logger.Warning("Local LLM is enabled, but no readable GGUF model was selected. Falling back to RuleBasedBrain.");
         _warnedMissing = true;
+    }
+
+    private void LogLlmStatus(string? discoveredModelPath, bool readable, string finalBrain)
+    {
+        if (_statusLogged && finalBrain != "RuleBasedBrain fallback")
+        {
+            return;
+        }
+
+        _statusLogged = true;
+        Action<string> write = finalBrain == "LocalLlmBrain" ? _logger.Info : _logger.Warning;
+        write("LLM status:");
+        write($"- configured enabled: {_config.LocalBrain.Enabled}");
+        write($"- requested modelPath: {_config.LocalBrain.ModelPath}");
+        write($"- discovered modelPath: {discoveredModelPath ?? "none"}");
+        write($"- model readable: {FileSystemAccess.YesNo(readable)}");
+        write($"- final brain: {finalBrain}");
     }
 
     private static string TrimForLog(string text) =>
