@@ -44,7 +44,7 @@ public sealed class UiaReader
                 .Select(group => group.OrderByDescending(candidate => candidate.Confidence).First())
                 .ToArray());
         }
-        catch (Exception ex) when (ex is InvalidOperationException or COMException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LastReadFailed = true;
             WarnUiaFailure($"FlaUI UIA tree read failed: {ex.Message}");

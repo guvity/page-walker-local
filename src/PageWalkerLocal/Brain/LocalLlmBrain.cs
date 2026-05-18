@@ -108,7 +108,7 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
 
             _modelParams = new ModelParams(modelPath)
             {
-                ContextSize = 2048,
+                ContextSize = _config.LocalBrain.ContextSize,
                 GpuLayerCount = 0
             };
             _model = LLamaWeights.LoadFromFile(_modelParams);
@@ -140,6 +140,7 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
         var inferenceParams = new InferenceParams
         {
             MaxTokens = Math.Clamp(_config.LocalBrain.MaxTokens, 16, 512),
+            OverflowStrategy = ContextOverflowStrategy.TruncateAndReprefill,
             AntiPrompts = ["\n\n", "</json>", "User:"],
             SamplingPipeline = new DefaultSamplingPipeline
             {
@@ -167,12 +168,14 @@ You are PageWalkerLocal local decision brain.
 Return strict JSON only. No markdown. No extra text.
 Choose exactly one action from allowedActionDetails.
 Never invent targetId or coordinates.
+For untargeted actions such as Scroll, HumanRead, and Stop, return "targetId": null.
+Use action names exactly from allowedActionDetails.
 Never choose payment, deposit, CAPTCHA, account creation, or forbidden actions.
 Schema:
 {"action":"SCROLL","targetId":null,"reason":"short reason","confidence":0.75}
 
 State:
-""" + _promptBuilder.Build(context, state, allowed) + "\nJSON:";
+""" + _promptBuilder.BuildCompact(context, state, allowed, _config.LocalBrain.MaxPromptChars) + "\nJSON:";
     }
 
     private string? ResolveModelPath()

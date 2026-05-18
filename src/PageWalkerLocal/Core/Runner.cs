@@ -27,6 +27,7 @@ public sealed class Runner
     private readonly NavigationMemory _navigationMemory = new();
     private readonly BrowserStateTracker _browserStateTracker = new();
     private readonly BrowserTabTracker _tabTracker;
+    private readonly BrowserWindowTracker _windowTracker;
     private readonly ActionHistory _history = new();
 
     private Runner(
@@ -43,7 +44,8 @@ public sealed class Runner
         ScreenshotDumper screenshotDumper,
         DecisionLogWriter decisionLogWriter,
         HtmlReportWriter reportWriter,
-        BrowserTabTracker tabTracker)
+        BrowserTabTracker tabTracker,
+        BrowserWindowTracker windowTracker)
     {
         _config = config;
         _paths = paths;
@@ -59,6 +61,7 @@ public sealed class Runner
         _decisionLogWriter = decisionLogWriter;
         _reportWriter = reportWriter;
         _tabTracker = tabTracker;
+        _windowTracker = windowTracker;
     }
 
     public static Runner Create(AppConfig config, RuntimePaths paths, AppLogger logger)
@@ -89,7 +92,8 @@ public sealed class Runner
             new ScreenshotDumper(paths, config, logger),
             new DecisionLogWriter(paths, config),
             new HtmlReportWriter(paths),
-            new BrowserTabTracker(logger));
+            new BrowserTabTracker(logger),
+            new BrowserWindowTracker(windowFinder, logger));
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken)
@@ -103,134 +107,149 @@ public sealed class Runner
         }
 
         _logger.Info($"Target window: Process='{target.ProcessName}', Title='{target.Title}', Bounds={target.AllowedBounds}.");
+        _windowTracker.CaptureBaseline(target);
         var guard = new WindowGuard(_windowFinder, _config, _logger, target);
         var stopwatch = Stopwatch.StartNew();
         var step = 0;
         var depth = 0;
         var scrollsOnPage = 0;
         var technicalRetries = 0;
+        var exitCode = 0;
 
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            if (step >= _config.MaxSteps)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                _logger.Info($"Stopping at maxSteps={_config.MaxSteps}.");
-                break;
-            }
+                _windowTracker.ObserveNewWindows("start-of-step");
 
-            if (stopwatch.Elapsed.TotalSeconds >= _config.MaxRuntimeSeconds)
-            {
-                _logger.Info($"Stopping at maxRuntimeSeconds={_config.MaxRuntimeSeconds}.");
-                break;
-            }
-
-            if (!guard.CheckWindowStillActive())
-            {
-                _logger.Warning("Pausing/stopping because focus left the target window.");
-                return 4;
-            }
-
-            using var frame = _screenCapture.Capture(guard.AllowedBounds);
-            var screenshotPath = _screenshotDumper.Save(frame, step);
-            var ocr = await _ocrEngine.ReadAsync(frame.Bitmap, frame.Bounds, cancellationToken).ConfigureAwait(false);
-            var uia = await _uiaReader.ReadCandidatesAsync(target, cancellationToken).ConfigureAwait(false);
-            if (_uiaReader.LastReadFailed && !_ocrEngine.IsAvailable)
-            {
-                _logger.Warning("Both OCR and UIA are unavailable; perception is limited to window title and static defaults.");
-            }
-
-            var state = _classifier.Classify(frame, target, ocr, uia);
-            var browserSnapshot = _browserStateTracker.Observe(state);
-            if (!BrowserStateTracker.IsCurrentDomainAllowed(browserSnapshot, _config))
-            {
-                _logger.Warning($"Current URL/domain is outside configured limits. Url='{browserSnapshot.CurrentUrl}', Domain='{browserSnapshot.CurrentDomain}'.");
-                _history.Add(ActionPlan.Stop("Current domain is outside configured navigation limits."), "domain-stopped");
-                break;
-            }
-
-            _navigationMemory.MarkVisited(browserSnapshot.PageKey);
-
-            var context = new PlannerContext
-            {
-                Step = step,
-                Depth = depth,
-                ScrollsOnCurrentPage = scrollsOnPage,
-                Elapsed = stopwatch.Elapsed,
-                VisitedKeys = _navigationMemory.Visited,
-                CurrentUrl = browserSnapshot.CurrentUrl,
-                CurrentDomain = browserSnapshot.CurrentDomain,
-                InitialDomain = browserSnapshot.InitialDomain
-            };
-
-            var plan = await _planner.PlanAsync(context, state, cancellationToken).ConfigureAwait(false);
-            _decisionLogWriter.Write(step, context, state, plan, screenshotPath);
-            _logger.Info($"Decision step={step}: action={plan.Action}, confidence={plan.Confidence:0.00}, reason={plan.Reason}");
-
-            if (plan.Action == WalkerAction.Stop)
-            {
-                _history.Add(plan, "stop");
-                break;
-            }
-
-            if (state.IsTechnicalPage && plan.Action == WalkerAction.PressKey)
-            {
-                if (technicalRetries >= _config.RetryCount)
+                if (step >= _config.MaxSteps)
                 {
-                    _logger.Warning("Technical page retry limit reached.");
+                    _logger.Info($"Stopping at maxSteps={_config.MaxSteps}.");
                     break;
                 }
 
-                technicalRetries++;
-            }
-            else if (!state.IsTechnicalPage)
-            {
-                technicalRetries = 0;
-            }
+                if (stopwatch.Elapsed.TotalSeconds >= _config.MaxRuntimeSeconds)
+                {
+                    _logger.Info($"Stopping at maxRuntimeSeconds={_config.MaxRuntimeSeconds}.");
+                    break;
+                }
 
-            string outcome;
-            var tabsBefore = BrowserTabTracker.CountVisibleTabs(state);
-            try
-            {
-                outcome = await _humanInteraction.ExecuteAsync(plan, state, guard, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
-            {
-                _logger.Error("Safety guard stopped action execution.", ex);
-                _history.Add(plan, $"guard-stopped: {ex.Message}");
-                return 5;
-            }
+                if (!guard.CheckWindowStillActive())
+                {
+                    _logger.Warning("Pausing/stopping because focus left the target window.");
+                    exitCode = 4;
+                    break;
+                }
 
-            _history.Add(plan, outcome);
-            _navigationMemory.MarkPlan(plan);
+                using var frame = _screenCapture.Capture(guard.AllowedBounds);
+                var screenshotPath = _screenshotDumper.Save(frame, step);
+                var ocr = await _ocrEngine.ReadAsync(frame.Bitmap, frame.Bounds, cancellationToken).ConfigureAwait(false);
+                var uia = await _uiaReader.ReadCandidatesAsync(target, cancellationToken).ConfigureAwait(false);
+                if (_uiaReader.LastReadFailed && !_ocrEngine.IsAvailable)
+                {
+                    _logger.Warning("Both OCR and UIA are unavailable; perception is limited to window title and static defaults.");
+                }
 
-            if (plan.Action == WalkerAction.Scroll)
-            {
-                scrollsOnPage++;
-            }
-            else if (plan.Action == WalkerAction.ClickSafeLink)
-            {
-                var tabsAfter = await CountTabsAfterNavigationAsync(target, cancellationToken).ConfigureAwait(false);
-                _tabTracker.MarkOwnTabOpenedIfCountIncreased(tabsBefore, tabsAfter, "ClickSafeLink");
-                depth++;
-                scrollsOnPage = 0;
-            }
-            else if (plan.Action == WalkerAction.CloseOwnTab)
-            {
-                _tabTracker.MarkOwnTabClosed();
-            }
+                var state = _classifier.Classify(frame, target, ocr, uia);
+                var browserSnapshot = _browserStateTracker.Observe(state);
+                if (!BrowserStateTracker.IsCurrentDomainAllowed(browserSnapshot, _config))
+                {
+                    _logger.Warning($"Current URL/domain is outside configured limits. Url='{browserSnapshot.CurrentUrl}', Domain='{browserSnapshot.CurrentDomain}'.");
+                    _history.Add(ActionPlan.Stop("Current domain is outside configured navigation limits."), "domain-stopped");
+                    break;
+                }
 
-            if (state.IsTechnicalPage && _config.RetryDelayMs > 0)
-            {
-                await Task.Delay(_config.DryRun ? Math.Min(_config.RetryDelayMs, 100) : _config.RetryDelayMs, cancellationToken).ConfigureAwait(false);
-            }
+                _navigationMemory.MarkVisited(browserSnapshot.PageKey);
 
-            step++;
+                var context = new PlannerContext
+                {
+                    Step = step,
+                    Depth = depth,
+                    ScrollsOnCurrentPage = scrollsOnPage,
+                    Elapsed = stopwatch.Elapsed,
+                    VisitedKeys = _navigationMemory.Visited,
+                    CurrentUrl = browserSnapshot.CurrentUrl,
+                    CurrentDomain = browserSnapshot.CurrentDomain,
+                    InitialDomain = browserSnapshot.InitialDomain
+                };
+
+                var plan = await _planner.PlanAsync(context, state, cancellationToken).ConfigureAwait(false);
+                _decisionLogWriter.Write(step, context, state, plan, screenshotPath);
+                _logger.Info($"Decision step={step}: action={plan.Action}, confidence={plan.Confidence:0.00}, reason={plan.Reason}");
+
+                if (plan.Action == WalkerAction.Stop)
+                {
+                    _history.Add(plan, "stop");
+                    break;
+                }
+
+                if (state.IsTechnicalPage && plan.Action == WalkerAction.PressKey)
+                {
+                    if (technicalRetries >= _config.RetryCount)
+                    {
+                        _logger.Warning("Technical page retry limit reached.");
+                        break;
+                    }
+
+                    technicalRetries++;
+                }
+                else if (!state.IsTechnicalPage)
+                {
+                    technicalRetries = 0;
+                }
+
+                string outcome;
+                var tabsBefore = BrowserTabTracker.CountVisibleTabs(state);
+                try
+                {
+                    outcome = await _humanInteraction.ExecuteAsync(plan, state, guard, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
+                {
+                    _logger.Error("Safety guard stopped action execution.", ex);
+                    _history.Add(plan, $"guard-stopped: {ex.Message}");
+                    exitCode = 5;
+                    break;
+                }
+
+                _windowTracker.ObserveNewWindows($"after-action:{plan.Action}");
+                _history.Add(plan, outcome);
+                _navigationMemory.MarkPlan(plan);
+
+                if (plan.Action == WalkerAction.Scroll)
+                {
+                    scrollsOnPage++;
+                }
+                else if (plan.Action == WalkerAction.ClickSafeLink)
+                {
+                    var tabsAfter = await CountTabsAfterNavigationAsync(target, cancellationToken).ConfigureAwait(false);
+                    _tabTracker.MarkOwnTabOpenedIfCountIncreased(tabsBefore, tabsAfter, "ClickSafeLink");
+                    depth++;
+                    scrollsOnPage = 0;
+                }
+                else if (plan.Action == WalkerAction.CloseOwnTab)
+                {
+                    _tabTracker.MarkOwnTabClosed();
+                }
+
+                if (state.IsTechnicalPage && _config.RetryDelayMs > 0)
+                {
+                    await Task.Delay(_config.DryRun ? Math.Min(_config.RetryDelayMs, 100) : _config.RetryDelayMs, cancellationToken).ConfigureAwait(false);
+                }
+
+                step++;
+            }
+        }
+        finally
+        {
+            _windowTracker.ObserveNewWindows("cleanup");
+            _windowTracker.CloseTrackedWindows(_config.DryRun);
         }
 
         await CleanupOwnTabsAsync(guard, cancellationToken).ConfigureAwait(false);
         var report = _reportWriter.Write(_history);
         _logger.Info($"Run finished. Report: {report}");
-        return 0;
+        return exitCode;
     }
 
     private async Task CleanupOwnTabsAsync(WindowGuard guard, CancellationToken cancellationToken)

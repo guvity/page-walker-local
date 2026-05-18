@@ -27,8 +27,7 @@ public sealed class BrainJsonParser
                 return null;
             }
 
-            var allowed = allowedActions.FirstOrDefault(plan => plan.Action == action
-                && (targetId is null || string.Equals(plan.TargetId, targetId, StringComparison.OrdinalIgnoreCase)));
+            var allowed = allowedActions.FirstOrDefault(plan => MatchesAllowedAction(plan, action, targetId));
             if (allowed is null)
             {
                 return null;
@@ -54,6 +53,25 @@ public sealed class BrainJsonParser
         {
             return null;
         }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private static bool MatchesAllowedAction(ActionPlan plan, WalkerAction action, string? targetId)
+    {
+        if (plan.Action != action)
+        {
+            return false;
+        }
+
+        if (plan.TargetId is null)
+        {
+            return true;
+        }
+
+        return string.Equals(plan.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ExtractJsonObject(string text)

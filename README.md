@@ -115,7 +115,9 @@ Local LLM settings are disabled by default:
   "localBrain": {
     "enabled": false,
     "provider": "LLamaSharp",
-    "modelPath": "auto"
+    "modelPath": "auto",
+    "contextSize": 4096,
+    "maxPromptChars": 8000
   }
 }
 ```
@@ -184,3 +186,5 @@ All writable runtime files go under `%LOCALAPPDATA%\PageWalkerLocal\`. If the pr
 PageWalkerLocal refuses or stops on CAPTCHA-like text, low confidence, blocked/payment-like text, focus changes, out-of-bounds targets, and disallowed processes. Popup handling runs before page walking. Accept buttons are not clicked unless `allowAcceptButtons=true`.
 
 The program closes only tabs it has explicitly tracked as its own. It uses UIA tab counts as a best-effort signal and does not assume unknown tabs belong to it.
+
+In live mode, the program also tracks new top-level browser windows that appear after startup, such as OAuth/login popups opened by a site. On finish it requests close only for those newly detected windows and never closes the original browser window. In dry-run mode it logs which new windows would be closed without sending close messages.

@@ -93,6 +93,8 @@ public sealed class AppConfig
         Ocr.ModelsPath = string.IsNullOrWhiteSpace(Ocr.ModelsPath) ? "auto" : Ocr.ModelsPath.Trim();
         LocalBrain.Provider = string.IsNullOrWhiteSpace(LocalBrain.Provider) ? "LLamaSharp" : LocalBrain.Provider.Trim();
         LocalBrain.ModelPath = string.IsNullOrWhiteSpace(LocalBrain.ModelPath) ? "auto" : LocalBrain.ModelPath.Trim();
+        LocalBrain.ContextSize = Math.Clamp(LocalBrain.ContextSize, 512u, 32768u);
+        LocalBrain.MaxPromptChars = Math.Clamp(LocalBrain.MaxPromptChars, 2000, 32000);
 
         if (Rectangle.Width <= 0 || Rectangle.Height <= 0)
         {
@@ -125,6 +127,8 @@ public sealed class LocalBrainOptions
     public string Provider { get; set; } = "LLamaSharp";
     public string ModelPath { get; set; } = "auto";
     public int MaxTokens { get; set; } = 160;
+    public uint ContextSize { get; set; } = 4096;
+    public int MaxPromptChars { get; set; } = 8000;
     public double Temperature { get; set; } = 0.2;
     public bool StrictJson { get; set; } = true;
     public double MinConfidence { get; set; } = 0.65;
