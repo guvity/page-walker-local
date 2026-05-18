@@ -1,6 +1,6 @@
 # PageWalkerLocal Handoff
 
-Date: 2026-05-18 23:08:19 +02:00
+Date: 2026-05-19 01:40:09 +02:00
 Repository: `guvity/page-walker-local`
 Working branch: `codex/phase-2-fix-ocr-runtime-auto-models`
 Base branch: `codex/phase-2-real-ocr-llm`
@@ -14,6 +14,10 @@ This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 - Added app-local MSVC runtime DLL packaging to fix ONNX Runtime native load failures on target machines without a suitable VC++ runtime.
 - Added `--model-discovery-test` and `--ocr-self-test`.
 - Expanded writable runtime directories under `%LOCALAPPDATA%\PageWalkerLocal\`.
+- Fixed a target-machine LLM runtime failure where the GGUF model loaded successfully but first inference failed with `ContextOverflowException`.
+- Added compact LLM prompt generation, configurable context size/prompt budget, and safer handling of untargeted actions returned with a spurious `targetId`.
+- Added tracking and cleanup for new browser windows opened during a run, while preserving the original browser window.
+- Made additional FlaUI window/element availability failures non-fatal.
 - Updated the Windows x64 GitHub Actions workflow to run on `codex/**`, print native DLLs, fail if `onnxruntime*.dll` is missing, and run the new self-tests.
 - Updated README, sample config, schema, and model docs.
 
@@ -22,6 +26,7 @@ This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 - `src/PageWalkerLocal/Core/FileSystemAccess.cs`
 - `src/PageWalkerLocal/Core/ModelDiscovery.cs`
 - `src/PageWalkerLocal/Core/CliSelfTests.cs`
+- `src/PageWalkerLocal/Browser/BrowserWindowTracker.cs`
 - `src/PageWalkerLocal/Diagnostics/NativeDependencyDiagnostics.cs`
 - `src/PageWalkerLocal/Diagnostics/RuntimePermissionDiagnostics.cs`
 
@@ -36,6 +41,8 @@ This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 - `src/PageWalkerLocal/Core/AppConfig.cs`
 - `src/PageWalkerLocal/Core/RuntimePaths.cs`
 - `src/PageWalkerLocal/Core/Runner.cs`
+- `src/PageWalkerLocal/Brain/BrainJsonParser.cs`
+- `src/PageWalkerLocal/Brain/BrainPromptBuilder.cs`
 - `src/PageWalkerLocal/Perception/RapidOcrEngine.cs`
 - `src/PageWalkerLocal/Perception/UiaReader.cs`
 - `src/PageWalkerLocal/Brain/LocalLlmBrain.cs`
@@ -84,6 +91,8 @@ Default config is now:
   "modelPath": "auto",
   "maxTokens": 160,
   "temperature": 0.2,
+  "contextSize": 4096,
+  "maxPromptChars": 8000,
   "strictJson": true,
   "minConfidence": 0.65
 }
@@ -98,6 +107,25 @@ When `localBrain.enabled=true` and `modelPath` is `auto`, empty, missing, or a r
 - configured `modelsRoot` and `modelsRoot\llm`
 
 Selection prefers `qwen2.5-0.5b`, then `qwen2.5`, `smollm`, `tinyllama`, and quant names `q4_k_m`, `q4_0`, `q3_k_m`, `q5_k_m`, `q5_0`, `q8_0`, `fp16`. `fp16` is avoided when any readable non-fp16 candidate exists. If no readable GGUF is selected, the app falls back to `RuleBasedBrain`.
+
+## LLM Runtime Fix
+
+The 2026-05-19 target-machine log showed the local LLM model was discovered and loaded:
+
+```text
+Loaded local GGUF model through LLamaSharp: 'C:\PageWalkerLocal-win-x64\models\llm\qwen2.5-0.5b-instruct-q4_k_m.gguf'.
+```
+
+The failure was not model discovery. The first inference failed with `LLama.Exceptions.ContextOverflowException` because the prompt exceeded the model context window. The fix keeps `LocalLlmBrain` enabled by:
+
+- setting `ModelParams.ContextSize` from `localBrain.contextSize` (default `4096`);
+- setting `InferenceParams.OverflowStrategy` to `ContextOverflowStrategy.TruncateAndReprefill`;
+- using `BrainPromptBuilder.BuildCompact(...)` with `localBrain.maxPromptChars` (default `8000`);
+- reducing visible text, candidate count, and candidate text length while preserving allowed action details;
+- telling the model to return `targetId: null` for untargeted actions such as `Scroll`, `HumanRead`, and `Stop`;
+- accepting an allowed untargeted action even if the model incorrectly returns a non-null `targetId`.
+
+If LLM loading itself fails or no readable GGUF is available, the app still falls back to `RuleBasedBrain`.
 
 ## ONNX Runtime Diagnostics
 
@@ -168,20 +196,28 @@ If OCR is also unavailable:
 Both OCR and UIA are unavailable; perception is limited to window title and static defaults.
 ```
 
+`ElementNotAvailableException` and similar FlaUI runtime/window-lifetime failures are now also logged and treated as non-fatal. This prevents a spawned or closed browser window from crashing the run during perception.
+
+## New Window Cleanup
+
+`BrowserWindowTracker` captures the baseline top-level browser windows after the target browser window is selected. During the run it observes new allowed browser windows that appear outside the original target, such as OAuth or social-login popups.
+
+At cleanup, only windows that appeared after the baseline are closed. The original target browser window is never closed by this cleanup path. In dry-run mode the app only logs which spawned windows would be closed; in live mode it posts `WM_CLOSE` to the tracked spawned windows.
+
 ## Validation Notes
 
 Local `dotnet build` could not run in this Codex environment because only the .NET runtime is installed and no SDK is available. `git diff --check` passed locally, and the branch was validated through GitHub Actions.
 
 Latest GitHub Actions validation succeeded:
 
-- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26060437512`
+- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26066753413`
 - Job: `Publish portable win-x64 folder`
 - Result: success
-- Validated code commit: `8d9080055ef60df466f6ae561a58eb7152500541`
+- Validated code commit: `3cc30b119cbd0f05747db5066e1ecfc87b1a7ef7`
 - Artifact: `PageWalkerLocal-win-x64`
-- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26060437512/artifacts/7069155951`
-- Artifact size: `101393185` bytes
-- Artifact SHA256 digest: `867b32c04e81daf5abd84fa26964b5b119cf43aff36fc5dc605efcc3c3304a55`
+- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26066753413/artifacts/7071548023`
+- Artifact size: `101395957` bytes
+- Artifact SHA256 digest: `ef51fe19abfd1304824d8d61c4f2b598d1aa035179ee0244233c1afee4becc1d`
 
 Workflow checks completed:
 
@@ -206,10 +242,18 @@ Native DLLs confirmed in artifact logs:
 
 OCR self-test selected the bundled/published RapidOCR v5 model set under `artifacts\PageWalkerLocal-win-x64\models\v5`, confirmed all four files readable, confirmed app-local MSVC runtime files readable, `SessionOptions` succeeded, RapidOCR initialized with custom models, and one tiny bitmap OCR call completed with text length `15` and line count `1`.
 
+Local validation for the LLM/window cleanup fix:
+
+- `git diff --check`: success.
+- Local `dotnet build`: not available in this environment because no .NET SDK is installed.
+- GitHub Actions run `26066753413`: success.
+
 ## Remaining Work and Risks
 
 - If ONNX Runtime still fails on a target machine with the new artifact, inspect the logged app-local MSVC runtime DLLs and then check OS/CPU compatibility or corrupted system VC++ runtime state.
 - Runtime OCR quality and Chromium UIA behavior still need live Windows desktop/RDP validation.
+- The compact prompt fix prevents context overflow, but real LLM decision quality should still be tested on several live sites with the chosen GGUF model.
+- New-window cleanup uses Win32 top-level browser window tracking and `WM_CLOSE`; unusual browser shells or windows with custom close handling may need follow-up tuning.
 - `ModelDiscovery` is deterministic but heuristic; unusual OCR model naming may still require explicit paths.
 - No unit tests exist yet for model selection scoring, permission probes, or CLI exit code behavior.
-- Future phase should add Ctrl+L URL fallback, richer reports, and focused unit tests around model discovery, planner safety, and domain handling.
+- Future phase should add Ctrl+L URL fallback, richer reports, live LLM regression scenarios, and focused unit tests around model discovery, planner safety, prompt compaction, spawned-window cleanup, and domain handling.
