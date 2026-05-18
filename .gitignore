@@ -1,0 +1,10 @@
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+*.log
+*.zip
+models/ocr/*
+models/llm/*
+!models/README.md
