@@ -1,6 +1,6 @@
 # PageWalkerLocal Handoff
 
-Date: 2026-05-18 21:02:36 +02:00
+Date: 2026-05-18 21:07:01 +02:00
 Repository: `guvity/page-walker-local`
 Working branch: `codex/phase-2-fix-ocr-runtime-auto-models`
 Base branch: `codex/phase-2-real-ocr-llm`
@@ -164,21 +164,39 @@ Both OCR and UIA are unavailable; perception is limited to window title and stat
 
 ## Validation Notes
 
-Local `dotnet build` could not run in this Codex environment because only the .NET runtime is installed and no SDK is available. `git diff --check` passed. The branch must be validated through GitHub Actions after push.
+Local `dotnet build` could not run in this Codex environment because only the .NET runtime is installed and no SDK is available. `git diff --check` passed locally, and the branch was validated through GitHub Actions.
 
-Expected workflow checks:
+GitHub Actions validation succeeded:
 
-- `dotnet restore`
-- `dotnet publish` for self-contained `win-x64`
-- native DLL listing
-- fail workflow if `onnxruntime*.dll` is absent from artifact
-- `PageWalkerLocal.exe --model-discovery-test`
-- `PageWalkerLocal.exe --ocr-self-test` with exit `0` or `2` accepted
-- artifact upload
+- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26054374843`
+- Job: `Publish portable win-x64 folder`
+- Result: success
+- Commit: `c2ce679acb650f4a937babcab192527d68b1fdc6`
+- Artifact: `PageWalkerLocal-win-x64`
+- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26054374843/artifacts/7066803291`
+- Artifact size: `100670147` bytes
+- Artifact SHA256 digest: `366c25d8591398972df0ee61cada083cb75890c5164861e7350ddd5c842030a4`
+
+Workflow checks completed:
+
+- `dotnet restore`: success
+- `dotnet publish` self-contained `win-x64`: success
+- native DLL listing: success
+- `onnxruntime*.dll` artifact check: success
+- `PageWalkerLocal.exe --model-discovery-test`: success
+- `PageWalkerLocal.exe --ocr-self-test`: success
+- artifact upload: success
+
+Native DLLs confirmed in artifact logs:
+
+- `onnxruntime.dll` - `14718776` bytes
+- `onnxruntime_providers_shared.dll` - `21856` bytes
+- `SkiaSharp.dll` - `490016` bytes
+
+OCR self-test selected the bundled/published RapidOCR v5 model set under `artifacts\PageWalkerLocal-win-x64\models\v5`, confirmed all four files readable, `SessionOptions` succeeded, RapidOCR initialized with custom models, and one tiny bitmap OCR call completed with text length `15` and line count `1`.
 
 ## Remaining Work and Risks
 
-- Confirm GitHub Actions success on this branch and update this section with run URL/artifact details.
 - Confirm target Windows machines have VC++ Redistributable x64 if ONNX Runtime native init fails.
 - Runtime OCR quality and Chromium UIA behavior still need live Windows desktop/RDP validation.
 - `ModelDiscovery` is deterministic but heuristic; unusual OCR model naming may still require explicit paths.
