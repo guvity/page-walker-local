@@ -67,7 +67,7 @@ public sealed class Runner
         var ruleBrain = new RuleBasedBrain(config);
         var brain = new LocalLlmBrain(config, ruleBrain, logger);
         var planner = new Planner(brain, new PlannerRules(config), logger);
-        var ocr = config.Ocr.Enabled
+        IOcrEngine ocr = config.Ocr.Enabled
             ? new RapidOcrEngine(config.Ocr.ModelsPath, logger)
             : new NullOcrEngine(logger);
 
