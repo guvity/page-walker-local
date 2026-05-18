@@ -126,7 +126,7 @@ public sealed class RapidOcrEngine : IOcrEngine, IDisposable
         return decoded;
     }
 
-    private static ScreenBounds ToScreenBounds(IReadOnlyList<SKPoint> points, ScreenBounds captureBounds)
+    private static ScreenBounds ToScreenBounds(IReadOnlyList<SKPointI> points, ScreenBounds captureBounds)
     {
         if (points.Count == 0)
         {

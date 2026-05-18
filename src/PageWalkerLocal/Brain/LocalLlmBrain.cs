@@ -103,8 +103,7 @@ public sealed class LocalLlmBrain : IBrain, IDisposable
             _modelParams = new ModelParams(modelPath)
             {
                 ContextSize = 2048,
-                GpuLayerCount = 0,
-                Seed = _config.RandomSeed ?? 1337
+                GpuLayerCount = 0
             };
             _model = LLamaWeights.LoadFromFile(_modelParams);
             _logger.Info($"Loaded local GGUF model through LLamaSharp: '{modelPath}'.");

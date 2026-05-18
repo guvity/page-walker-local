@@ -150,10 +150,10 @@ public sealed class UiaReader
             }
 
             bounds = new ScreenBounds(
-                (int)Math.Round(rect.Left),
-                (int)Math.Round(rect.Top),
-                Math.Max(1, (int)Math.Round(rect.Width)),
-                Math.Max(1, (int)Math.Round(rect.Height)));
+                (int)Math.Round(Convert.ToDouble(rect.Left)),
+                (int)Math.Round(Convert.ToDouble(rect.Top)),
+                Math.Max(1, (int)Math.Round(Convert.ToDouble(rect.Width))),
+                Math.Max(1, (int)Math.Round(Convert.ToDouble(rect.Height))));
             return allowed.Contains(bounds.Center) || allowed.Contains(bounds);
         }
         catch
