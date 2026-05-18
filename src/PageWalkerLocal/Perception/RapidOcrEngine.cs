@@ -133,10 +133,10 @@ public sealed class RapidOcrEngine : IOcrEngine, IDisposable
             return captureBounds;
         }
 
-        var minX = points.Min(point => point.X);
-        var minY = points.Min(point => point.Y);
-        var maxX = points.Max(point => point.X);
-        var maxY = points.Max(point => point.Y);
+        var minX = Convert.ToDouble(points.Min(point => point.X));
+        var minY = Convert.ToDouble(points.Min(point => point.Y));
+        var maxX = Convert.ToDouble(points.Max(point => point.X));
+        var maxY = Convert.ToDouble(points.Max(point => point.Y));
         return new ScreenBounds(
             captureBounds.X + (int)Math.Floor(minX),
             captureBounds.Y + (int)Math.Floor(minY),
