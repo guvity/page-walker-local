@@ -1,6 +1,6 @@
 # PageWalkerLocal Handoff
 
-Date: 2026-05-18 21:07:01 +02:00
+Date: 2026-05-18 21:10:28 +02:00
 Repository: `guvity/page-walker-local`
 Working branch: `codex/phase-2-fix-ocr-runtime-auto-models`
 Base branch: `codex/phase-2-real-ocr-llm`
@@ -168,14 +168,14 @@ Local `dotnet build` could not run in this Codex environment because only the .N
 
 GitHub Actions validation succeeded:
 
-- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26054374843`
+- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26054563925`
 - Job: `Publish portable win-x64 folder`
 - Result: success
-- Commit: `c2ce679acb650f4a937babcab192527d68b1fdc6`
+- Validated code commit: `85797436a992ef8474154e2ee30d9a658db8f133`
 - Artifact: `PageWalkerLocal-win-x64`
-- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26054374843/artifacts/7066803291`
-- Artifact size: `100670147` bytes
-- Artifact SHA256 digest: `366c25d8591398972df0ee61cada083cb75890c5164861e7350ddd5c842030a4`
+- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26054563925/artifacts/7066874892`
+- Artifact size: `100670176` bytes
+- Artifact SHA256 digest: `affe1dbcbee0b52c05dc1306f4aadc3618ae90964162010367403576f5c9121c`
 
 Workflow checks completed:
 
