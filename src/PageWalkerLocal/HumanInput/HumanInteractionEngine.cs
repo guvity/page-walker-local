@@ -76,7 +76,7 @@ public sealed class HumanInteractionEngine
 
         var target = plan.Target.Center;
         var current = Win32Input.GetCursorPosition();
-        var path = _mousePathGenerator.Generate(current, target, _profile);
+        var path = BuildSafePath(current, target, guard.AllowedBounds);
         await _input.MoveAlongPathAsync(path, guard, plan.Confidence, cancellationToken).ConfigureAwait(false);
         var preClickDelay = _random.Next(_profile.MinPreClickDelayMs, _profile.MaxPreClickDelayMs + 1);
         await _input.ClickAsync(target, guard, plan.Confidence, preClickDelay, cancellationToken).ConfigureAwait(false);
@@ -84,7 +84,7 @@ public sealed class HumanInteractionEngine
 
     private async Task ScrollAsync(PerceptionState state, WindowGuard guard, CancellationToken cancellationToken)
     {
-        await MaybeMicroMoveAsync(guard, cancellationToken).ConfigureAwait(false);
+        await EnsureCursorInsideAsync(guard, cancellationToken).ConfigureAwait(false);
         var steps = _scrollGenerator.Generate(_profile, state.VisibleText.Length);
         await _input.ScrollAsync(steps, guard, cancellationToken).ConfigureAwait(false);
     }
@@ -102,6 +102,19 @@ public sealed class HumanInteractionEngine
         await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task EnsureCursorInsideAsync(WindowGuard guard, CancellationToken cancellationToken)
+    {
+        var current = Win32Input.GetCursorPosition();
+        if (guard.AllowedBounds.Contains(current))
+        {
+            return;
+        }
+
+        var target = guard.AllowedBounds.Center;
+        var path = BuildSafePath(current, target, guard.AllowedBounds);
+        await _input.MoveAlongPathAsync(path, guard, 0.8, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task MaybeMicroMoveAsync(WindowGuard guard, CancellationToken cancellationToken)
     {
         if (_random.NextDouble() > 0.35)
@@ -113,8 +126,30 @@ public sealed class HumanInteractionEngine
         var target = new ScreenPoint(
             center.X + _random.Next(-Math.Max(8, guard.AllowedBounds.Width / 12), Math.Max(9, guard.AllowedBounds.Width / 12)),
             center.Y + _random.Next(-Math.Max(8, guard.AllowedBounds.Height / 12), Math.Max(9, guard.AllowedBounds.Height / 12)));
+        target = guard.AllowedBounds.Clamp(target);
         var current = Win32Input.GetCursorPosition();
-        var path = _mousePathGenerator.Generate(current, target, _profile);
+        var path = BuildSafePath(current, target, guard.AllowedBounds);
         await _input.MoveAlongPathAsync(path, guard, 0.8, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IReadOnlyList<TimedMousePoint> BuildSafePath(ScreenPoint current, ScreenPoint target, ScreenBounds allowedBounds)
+    {
+        target = allowedBounds.Clamp(target);
+        var raw = _mousePathGenerator.Generate(current, target, _profile);
+        var safe = new List<TimedMousePoint>(raw.Count);
+        var enteredBounds = false;
+        for (var i = 0; i < raw.Count; i++)
+        {
+            var point = raw[i].Point;
+            enteredBounds |= allowedBounds.Contains(point);
+            if (enteredBounds || i == raw.Count - 1)
+            {
+                point = allowedBounds.Clamp(point);
+            }
+
+            safe.Add(raw[i] with { Point = i == raw.Count - 1 ? target : point });
+        }
+
+        return safe;
     }
 }

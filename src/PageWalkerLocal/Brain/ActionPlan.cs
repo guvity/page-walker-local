@@ -12,6 +12,7 @@ public sealed class ActionPlan
     public double Confidence { get; init; }
     public ConsoleKey? Key { get; init; }
     public string? TextInput { get; init; }
+    public string? MemoryKey { get; init; }
     public ScreenPoint? Point => Target?.Center;
 
     public static ActionPlan Stop(string reason) => new()

@@ -31,6 +31,15 @@ public sealed class BrainPromptBuilder
                 })
             },
             allowedActions = allowedActions.Select(action => action.Action.ToString())
+                .ToArray(),
+            allowedActionDetails = allowedActions.Select(action => new
+            {
+                action = action.Action.ToString(),
+                action.TargetId,
+                targetText = action.Target?.Text,
+                action.Reason,
+                action.Confidence
+            })
         };
 
         return JsonSerializer.Serialize(prompt);

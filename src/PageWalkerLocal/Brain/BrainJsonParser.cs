@@ -8,6 +8,7 @@ public sealed class BrainJsonParser
     {
         try
         {
+            json = ExtractJsonObject(json);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var actionName = root.GetProperty("action").GetString();
@@ -21,7 +22,7 @@ public sealed class BrainJsonParser
                 ? targetElement.GetString()
                 : null;
 
-            if (!Enum.TryParse<WalkerAction>(actionName, ignoreCase: true, out var action))
+            if (!TryParseAction(actionName, out var action))
             {
                 return null;
             }
@@ -40,6 +41,7 @@ public sealed class BrainJsonParser
                 Target = allowed.Target,
                 Key = allowed.Key,
                 TextInput = allowed.TextInput,
+                MemoryKey = allowed.MemoryKey,
                 Reason = reason,
                 Confidence = Math.Min(confidence, allowed.Confidence)
             };
@@ -52,5 +54,34 @@ public sealed class BrainJsonParser
         {
             return null;
         }
+    }
+
+    private static string ExtractJsonObject(string text)
+    {
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        return start >= 0 && end > start ? text[start..(end + 1)] : text;
+    }
+
+    private static bool TryParseAction(string? value, out WalkerAction action)
+    {
+        action = WalkerAction.Stop;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal);
+        foreach (var candidate in Enum.GetValues<WalkerAction>())
+        {
+            var candidateName = candidate.ToString().Replace("_", string.Empty, StringComparison.Ordinal);
+            if (string.Equals(candidateName, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                action = candidate;
+                return true;
+            }
+        }
+
+        return false;
     }
 }

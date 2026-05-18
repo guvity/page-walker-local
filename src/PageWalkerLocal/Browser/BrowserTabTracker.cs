@@ -1,4 +1,5 @@
 using PageWalkerLocal.Core;
+using PageWalkerLocal.Perception;
 
 namespace PageWalkerLocal.Browser;
 
@@ -36,5 +37,24 @@ public sealed class BrowserTabTracker
         }
 
         return Math.Max(0, _ownOpenedTabs);
+    }
+
+    public static int CountVisibleTabs(PerceptionState state) =>
+        state.OfKind(CandidateKind.TabItem)
+            .Select(candidate => candidate.Text)
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    public void MarkOwnTabOpenedIfCountIncreased(int before, int after, string reason)
+    {
+        if (after > before)
+        {
+            MarkOwnTabOpened($"{reason}; tabs before={before}, after={after}");
+        }
+        else
+        {
+            _logger.Debug($"No new tab detected. Tabs before={before}, after={after}. Reason={reason}");
+        }
     }
 }

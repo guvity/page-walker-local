@@ -6,15 +6,15 @@ This is not a CAPTCHA solver, not an anti-bot bypass tool, not a stealth/fingerp
 
 ## Status
 
-Phase 1 MVP is implemented:
+Phase 1 MVP is implemented, and the Phase 2 branch adds real local perception/planning pieces:
 
 - RuleBasedBrain only.
 - ActiveWindow and Rectangle target modes.
 - Per-user runtime paths under `%LOCALAPPDATA%\PageWalkerLocal\`.
 - Dry-run enabled by default.
 - Screenshot capture through GDI.
-- OCR interface with safe `NullOcrEngine` fallback.
-- FlaUI dependency present, with a defensive UIA reader path.
+- Real `RapidOcrNet` OCR with bundled PP-OCRv5 latin models and safe `NullOcrEngine` fallback if initialization fails.
+- FlaUI descendant traversal for buttons, links, inputs, text, address bar candidates, and tab items.
 - Technical page, popup, and age-gate detectors.
 - HumanInteractionEngine with Bezier-like mouse paths, jitter, dwell time, variable scrolls, and behavior profiles.
 - SafeInputController with bounds, active-window, process, confidence, and dry-run checks.
@@ -22,7 +22,7 @@ Phase 1 MVP is implemented:
 - Decision JSONL logs, screenshots, and HTML reports.
 - GitHub Actions Windows x64 self-contained publish workflow.
 
-Phase 2 targets RapidOCR integration and LLamaSharp GGUF local brain support. The local model will only choose from allowed actions; the hard planner remains authoritative.
+The local LLamaSharp brain only chooses from generated allowed actions; the hard planner remains authoritative and can reject any model decision.
 
 ## Runtime Data
 
@@ -102,7 +102,7 @@ Important options:
 - `allowForms`, `allowedFormFields`, `testFormData`: disabled by default.
 - `technicalPageAction`: `stop`, `retry`, `back`, or `close_tab`.
 
-Local LLM settings are present but disabled in Phase 1:
+Local LLM settings are disabled by default:
 
 ```json
 {
@@ -116,8 +116,10 @@ Local LLM settings are present but disabled in Phase 1:
 
 Place GGUF files manually in `models/llm/`. No model files are downloaded or committed by this project.
 
+OCR uses bundled `RapidOcrNet` defaults when no custom files are present. To override OCR models, place a detector ONNX, classifier ONNX, recognizer ONNX, and matching dictionary text file under `models/ocr/`.
+
 ## Safety Boundaries
 
 PageWalkerLocal refuses or stops on CAPTCHA-like text, low confidence, blocked/payment-like text, focus changes, out-of-bounds targets, and disallowed processes. Popup handling runs before page walking. Accept buttons are not clicked unless `allowAcceptButtons=true`.
 
-The program closes only tabs it has explicitly tracked as its own. The Phase 1 MVP does not assume unknown tabs belong to it.
+The program closes only tabs it has explicitly tracked as its own. It uses UIA tab counts as a best-effort signal and does not assume unknown tabs belong to it.

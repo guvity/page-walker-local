@@ -14,4 +14,7 @@ public sealed class PlannerContext
     public int ScrollsOnCurrentPage { get; init; }
     public TimeSpan Elapsed { get; init; }
     public IReadOnlySet<string> VisitedKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    public string? CurrentUrl { get; init; }
+    public string? CurrentDomain { get; init; }
+    public string? InitialDomain { get; init; }
 }

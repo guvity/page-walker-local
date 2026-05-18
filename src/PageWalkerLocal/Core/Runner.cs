@@ -131,8 +131,15 @@ public sealed class Runner
             var ocr = await _ocrEngine.ReadAsync(frame.Bitmap, frame.Bounds, cancellationToken).ConfigureAwait(false);
             var uia = await _uiaReader.ReadCandidatesAsync(target, cancellationToken).ConfigureAwait(false);
             var state = _classifier.Classify(frame, target, ocr, uia);
-            var key = _browserStateTracker.BuildPageKey(state);
-            _navigationMemory.MarkVisited(key);
+            var browserSnapshot = _browserStateTracker.Observe(state);
+            if (!BrowserStateTracker.IsCurrentDomainAllowed(browserSnapshot, _config))
+            {
+                _logger.Warning($"Current URL/domain is outside configured limits. Url='{browserSnapshot.CurrentUrl}', Domain='{browserSnapshot.CurrentDomain}'.");
+                _history.Add(ActionPlan.Stop("Current domain is outside configured navigation limits."), "domain-stopped");
+                break;
+            }
+
+            _navigationMemory.MarkVisited(browserSnapshot.PageKey);
 
             var context = new PlannerContext
             {
@@ -140,7 +147,10 @@ public sealed class Runner
                 Depth = depth,
                 ScrollsOnCurrentPage = scrollsOnPage,
                 Elapsed = stopwatch.Elapsed,
-                VisitedKeys = _navigationMemory.Visited
+                VisitedKeys = _navigationMemory.Visited,
+                CurrentUrl = browserSnapshot.CurrentUrl,
+                CurrentDomain = browserSnapshot.CurrentDomain,
+                InitialDomain = browserSnapshot.InitialDomain
             };
 
             var plan = await _planner.PlanAsync(context, state, cancellationToken).ConfigureAwait(false);
@@ -169,6 +179,7 @@ public sealed class Runner
             }
 
             string outcome;
+            var tabsBefore = BrowserTabTracker.CountVisibleTabs(state);
             try
             {
                 outcome = await _humanInteraction.ExecuteAsync(plan, state, guard, cancellationToken).ConfigureAwait(false);
@@ -181,6 +192,7 @@ public sealed class Runner
             }
 
             _history.Add(plan, outcome);
+            _navigationMemory.MarkPlan(plan);
 
             if (plan.Action == WalkerAction.Scroll)
             {
@@ -188,6 +200,8 @@ public sealed class Runner
             }
             else if (plan.Action == WalkerAction.ClickSafeLink)
             {
+                var tabsAfter = await CountTabsAfterNavigationAsync(target, cancellationToken).ConfigureAwait(false);
+                _tabTracker.MarkOwnTabOpenedIfCountIncreased(tabsBefore, tabsAfter, "ClickSafeLink");
                 depth++;
                 scrollsOnPage = 0;
             }
@@ -232,5 +246,24 @@ public sealed class Runner
             _history.Add(plan, outcome);
             _tabTracker.MarkOwnTabClosed();
         }
+    }
+
+    private async Task<int> CountTabsAfterNavigationAsync(TargetWindow target, CancellationToken cancellationToken)
+    {
+        await Task.Delay(_config.DryRun ? 25 : 650, cancellationToken).ConfigureAwait(false);
+        var active = _windowFinder.Find();
+        if (active is null || active.Handle != target.Handle)
+        {
+            return 0;
+        }
+
+        var candidates = await _uiaReader.ReadCandidatesAsync(active, cancellationToken).ConfigureAwait(false);
+        var state = new PerceptionState
+        {
+            Bounds = active.AllowedBounds,
+            WindowTitle = active.Title,
+            Candidates = candidates.ToList()
+        };
+        return BrowserTabTracker.CountVisibleTabs(state);
     }
 }

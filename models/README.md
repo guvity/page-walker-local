@@ -2,11 +2,18 @@
 
 Model files are not committed to this repository.
 
-OCR models, when Phase 2 RapidOCR support is enabled, should be placed under:
+OCR uses the `RapidOcrNet` bundled PP-OCRv5 latin model set by default. Custom OCR models can be placed under:
 
 ```text
 models/ocr/
 ```
+
+For a custom OCR model set, provide:
+
+- detector ONNX containing `det` in the file name;
+- classifier ONNX containing `cls` in the file name;
+- recognizer ONNX containing `rec` in the file name;
+- dictionary text file containing `dict` or `keys` in the file name.
 
 Optional local LLM GGUF files should be placed manually under:
 

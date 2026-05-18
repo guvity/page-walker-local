@@ -1,4 +1,7 @@
-using System.Reflection;
+using System.Runtime.InteropServices;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.UIA3;
 using PageWalkerLocal.Core;
 using PageWalkerLocal.Windowing;
 
@@ -6,6 +9,7 @@ namespace PageWalkerLocal.Perception;
 
 public sealed class UiaReader
 {
+    private const int MaxElements = 1200;
     private readonly AppLogger _logger;
     private bool _warned;
 
@@ -18,85 +22,181 @@ public sealed class UiaReader
     {
         try
         {
-            var fromFlaUi = TryReadWithFlaUi(window);
-            if (fromFlaUi.Count > 0)
+            using var automation = new UIA3Automation();
+            var root = automation.FromHandle(window.Handle);
+            var candidates = new List<CandidateElement>();
+            AddElement(candidates, root, window, "uia-root", 0);
+
+            var descendants = root.FindAllDescendants();
+            var index = 1;
+            foreach (var element in descendants.Take(MaxElements))
             {
-                return Task.FromResult<IReadOnlyList<CandidateElement>>(fromFlaUi);
+                cancellationToken.ThrowIfCancellationRequested();
+                AddElement(candidates, element, window, $"uia-{index}", index);
+                index++;
             }
-        }
-        catch (Exception ex) when (ex is TargetInvocationException or InvalidOperationException or TypeLoadException)
-        {
-            WarnOnce($"FlaUI UIA read failed: {ex.Message}");
-        }
 
-        var fallback = new List<CandidateElement>();
-        if (!string.IsNullOrWhiteSpace(window.Title))
-        {
-            fallback.Add(new CandidateElement("window-title", CandidateKind.Unknown, window.Title, window.AllowedBounds, 0.55, "window-title"));
+            return Task.FromResult<IReadOnlyList<CandidateElement>>(candidates
+                .GroupBy(candidate => $"{candidate.Kind}:{candidate.Text}:{candidate.Bounds}")
+                .Select(group => group.OrderByDescending(candidate => candidate.Confidence).First())
+                .ToArray());
         }
-
-        return Task.FromResult<IReadOnlyList<CandidateElement>>(fallback);
+        catch (Exception ex) when (ex is InvalidOperationException or COMException or UnauthorizedAccessException)
+        {
+            WarnOnce($"FlaUI UIA tree read failed: {ex.Message}");
+            return Task.FromResult<IReadOnlyList<CandidateElement>>(Fallback(window));
+        }
     }
 
-    private List<CandidateElement> TryReadWithFlaUi(TargetWindow window)
+    private static void AddElement(List<CandidateElement> candidates, AutomationElement element, TargetWindow window, string id, int index)
     {
-        // Kept reflective so the MVP can still start if FlaUI cannot initialize in a locked-down session.
-        var uia3Type = Type.GetType("FlaUI.UIA3.UIA3Automation, FlaUI.UIA3");
-        var elementType = Type.GetType("FlaUI.Core.AutomationElements.AutomationElement, FlaUI.Core");
-        if (uia3Type is null || elementType is null)
+        if (!TryReadBounds(element, window.AllowedBounds, out var bounds))
         {
-            WarnOnce("FlaUI assemblies are not available at runtime; UIA is limited.");
-            return [];
+            return;
         }
 
-        using var automation = Activator.CreateInstance(uia3Type) as IDisposable;
-        if (automation is null)
+        var name = Safe(() => element.Name) ?? string.Empty;
+        var automationId = Safe(() => element.AutomationId) ?? string.Empty;
+        var className = Safe(() => element.ClassName) ?? string.Empty;
+        var value = TryReadValue(element);
+        var text = FirstNonEmpty(value, name, automationId, className);
+        var controlType = Safe(() => element.ControlType);
+        var kind = MapKind(controlType, name, automationId, className, value);
+
+        if (kind == CandidateKind.Unknown && string.IsNullOrWhiteSpace(text))
         {
-            return [];
+            return;
         }
 
-        var fromHandle = elementType
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .FirstOrDefault(method => method.Name == "FromHandle"
-                && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(IntPtr)));
-
-        if (fromHandle is null)
+        var label = BuildLabel(text, name, automationId, className);
+        var confidence = kind switch
         {
-            WarnOnce("FlaUI AutomationElement.FromHandle was not found; UIA is limited.");
-            return [];
-        }
-
-        var parameters = fromHandle.GetParameters();
-        var args = parameters.Length switch
-        {
-            1 => new object?[] { window.Handle },
-            2 => parameters[0].ParameterType.IsInstanceOfType(automation)
-                ? new object?[] { automation, window.Handle }
-                : new object?[] { window.Handle, automation },
-            _ => null
+            CandidateKind.AddressBar => 0.92,
+            CandidateKind.Button or CandidateKind.Link or CandidateKind.Input => 0.82,
+            CandidateKind.TabItem => 0.80,
+            CandidateKind.Text => 0.68,
+            _ => 0.58
         };
 
-        if (args is null)
-        {
-            return [];
-        }
+        candidates.Add(new CandidateElement(id, kind, label, bounds, confidence, "fla-ui"));
+    }
 
-        var root = fromHandle.Invoke(null, args);
-        if (root is null)
+    private static IReadOnlyList<CandidateElement> Fallback(TargetWindow window)
+    {
+        if (string.IsNullOrWhiteSpace(window.Title))
         {
-            return [];
-        }
-
-        var name = root.GetType().GetProperty("Name")?.GetValue(root)?.ToString();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return [];
+            return Array.Empty<CandidateElement>();
         }
 
         return
         [
-            new CandidateElement("uia-root", CandidateKind.Unknown, name, window.AllowedBounds, 0.6, "fla-ui-root")
+            new CandidateElement("window-title", CandidateKind.Text, window.Title, window.AllowedBounds, 0.55, "window-title")
         ];
+    }
+
+    private static CandidateKind MapKind(ControlType controlType, string name, string automationId, string className, string? value)
+    {
+        var merged = $"{name} {automationId} {className} {value}".Trim();
+        if (controlType == ControlType.Edit && LooksLikeAddressBar(merged, value))
+        {
+            return CandidateKind.AddressBar;
+        }
+
+        if (controlType == ControlType.Button || controlType == ControlType.MenuItem || controlType == ControlType.SplitButton)
+        {
+            return CandidateKind.Button;
+        }
+
+        if (controlType == ControlType.Hyperlink)
+        {
+            return CandidateKind.Link;
+        }
+
+        if (controlType == ControlType.Edit || controlType == ControlType.ComboBox)
+        {
+            return CandidateKind.Input;
+        }
+
+        if (controlType == ControlType.Text || controlType == ControlType.Document)
+        {
+            return CandidateKind.Text;
+        }
+
+        if (controlType == ControlType.TabItem)
+        {
+            return CandidateKind.TabItem;
+        }
+
+        return CandidateKind.Unknown;
+    }
+
+    private static bool LooksLikeAddressBar(string merged, string? value)
+    {
+        return merged.Contains("address", StringComparison.OrdinalIgnoreCase)
+            || merged.Contains("omnibox", StringComparison.OrdinalIgnoreCase)
+            || Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private static bool TryReadBounds(AutomationElement element, ScreenBounds allowed, out ScreenBounds bounds)
+    {
+        bounds = default;
+        try
+        {
+            var rect = element.BoundingRectangle;
+            if (rect.Width <= 0 || rect.Height <= 0)
+            {
+                return false;
+            }
+
+            bounds = new ScreenBounds(
+                (int)Math.Round(rect.Left),
+                (int)Math.Round(rect.Top),
+                Math.Max(1, (int)Math.Round(rect.Width)),
+                Math.Max(1, (int)Math.Round(rect.Height)));
+            return allowed.Contains(bounds.Center) || allowed.Contains(bounds);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? TryReadValue(AutomationElement element)
+    {
+        try
+        {
+            var valuePattern = element.Patterns.Value.PatternOrDefault;
+            return valuePattern?.Value.ValueOrDefault;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static T? Safe<T>(Func<T> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+    private static string BuildLabel(string text, string name, string automationId, string className)
+    {
+        var parts = new[] { text, name, automationId, className }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3);
+        return string.Join(" | ", parts);
     }
 
     private void WarnOnce(string message)

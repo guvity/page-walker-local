@@ -1,3 +1,5 @@
+using PageWalkerLocal.Brain;
+
 namespace PageWalkerLocal.Browser;
 
 public sealed class NavigationMemory
@@ -17,4 +19,12 @@ public sealed class NavigationMemory
     }
 
     public bool WasVisited(string key) => _visited.Contains(key);
+
+    public void MarkPlan(ActionPlan plan)
+    {
+        if (!string.IsNullOrWhiteSpace(plan.MemoryKey))
+        {
+            MarkVisited(plan.MemoryKey);
+        }
+    }
 }

@@ -47,7 +47,7 @@ public sealed class PlannerRules
         var builtIns = new[]
         {
             "buy", "pay", "subscribe", "deposit", "confirm payment", "purchase", "order now",
-            "оплата", "купить", "подписка", "депозит", "заказать"
+            "checkout", "billing", "card", "crypto", "wallet"
         };
 
         return _config.BlockedTexts.Concat(builtIns)

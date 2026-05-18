@@ -28,13 +28,26 @@ public sealed class SafeInputController
         }
 
         var previous = TimeSpan.Zero;
-        foreach (var timed in points)
+        var enteredAllowedBounds = false;
+        for (var i = 0; i < points.Count; i++)
         {
+            var timed = points[i];
             cancellationToken.ThrowIfCancellationRequested();
-            var guardResult = guard.CheckAction(timed.Point, confidence);
-            if (!guardResult.Allowed)
+
+            if (!guard.CheckWindowStillActive())
             {
-                throw new InvalidOperationException(guardResult.Reason);
+                throw new InvalidOperationException("Target window lost focus during mouse movement.");
+            }
+
+            enteredAllowedBounds |= guard.AllowedBounds.Contains(timed.Point);
+            var mustValidatePoint = enteredAllowedBounds || i == points.Count - 1;
+            if (mustValidatePoint)
+            {
+                var guardResult = guard.CheckAction(timed.Point, confidence);
+                if (!guardResult.Allowed)
+                {
+                    throw new InvalidOperationException(guardResult.Reason);
+                }
             }
 
             var delay = timed.At - previous;

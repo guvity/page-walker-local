@@ -6,10 +6,12 @@ namespace PageWalkerLocal.Brain;
 public sealed class RuleBasedBrain : IBrain
 {
     private readonly AppConfig _config;
+    private readonly AllowedActionGenerator _allowedActions;
 
     public RuleBasedBrain(AppConfig config)
     {
         _config = config;
+        _allowedActions = new AllowedActionGenerator(config);
     }
 
     public Task<ActionPlan> DecideAsync(PlannerContext context, PerceptionState state, CancellationToken cancellationToken)
@@ -30,30 +32,14 @@ public sealed class RuleBasedBrain : IBrain
             return Task.FromResult(ActionPlan.Stop($"Blocked text '{blocked}' detected."));
         }
 
-        var popup = Best(state.OfKind(CandidateKind.PopupClose));
-        if (popup is not null && popup.Confidence >= 0.65)
+        var allowed = _allowedActions.Build(context, state);
+        var priority = PickFirst(allowed,
+            WalkerAction.ClosePopup,
+            WalkerAction.AnswerSimpleGate,
+            WalkerAction.FillAllowedFormField);
+        if (priority is not null)
         {
-            return Task.FromResult(new ActionPlan
-            {
-                Action = WalkerAction.ClosePopup,
-                TargetId = popup.Id,
-                Target = popup,
-                Reason = "Popup/modal close candidate has priority before page walking.",
-                Confidence = popup.Confidence
-            });
-        }
-
-        var gate = Best(state.OfKind(CandidateKind.AgeGate));
-        if (gate is not null && gate.Confidence >= 0.65)
-        {
-            return Task.FromResult(new ActionPlan
-            {
-                Action = WalkerAction.AnswerSimpleGate,
-                TargetId = gate.Id,
-                Target = gate,
-                Reason = "Allowed simple age/confirmation gate candidate.",
-                Confidence = gate.Confidence
-            });
+            return Task.FromResult(priority);
         }
 
         if (context.ScrollsOnCurrentPage < _config.MaxScrollsPerPage)
@@ -67,17 +53,10 @@ public sealed class RuleBasedBrain : IBrain
             });
         }
 
-        var link = BestSafeLink(state);
-        if (link is not null && context.Depth < _config.MaxDepth)
+        priority = PickFirst(allowed, WalkerAction.ClickSafeLink, WalkerAction.ClickSafeButton);
+        if (priority is not null)
         {
-            return Task.FromResult(new ActionPlan
-            {
-                Action = WalkerAction.ClickSafeLink,
-                TargetId = link.Id,
-                Target = link,
-                Reason = "Safe link candidate selected within configured depth.",
-                Confidence = link.Confidence
-            });
+            return Task.FromResult(priority);
         }
 
         return Task.FromResult(ActionPlan.Stop("No safe action remains within configured limits."));
@@ -95,24 +74,17 @@ public sealed class RuleBasedBrain : IBrain
         };
     }
 
-    private CandidateElement? BestSafeLink(PerceptionState state)
+    private static ActionPlan? PickFirst(IReadOnlyList<ActionPlan> plans, params WalkerAction[] actions)
     {
-        return state.OfKind(CandidateKind.Link)
-            .Where(candidate => !LooksDangerous(candidate.Text))
-            .OrderByDescending(candidate => candidate.Confidence)
-            .FirstOrDefault();
-    }
-
-    private static CandidateElement? Best(IEnumerable<CandidateElement> candidates) =>
-        candidates.OrderByDescending(candidate => candidate.Confidence).FirstOrDefault();
-
-    private static bool LooksDangerous(string text)
-    {
-        var blocked = new[]
+        foreach (var action in actions)
         {
-            "buy", "pay", "subscribe", "deposit", "confirm payment", "purchase", "order now",
-            "оплат", "купить", "подпис", "депозит", "заказать"
-        };
-        return blocked.Any(item => text.Contains(item, StringComparison.OrdinalIgnoreCase));
+            var plan = plans.FirstOrDefault(candidate => candidate.Action == action);
+            if (plan is not null)
+            {
+                return plan;
+            }
+        }
+
+        return null;
     }
 }

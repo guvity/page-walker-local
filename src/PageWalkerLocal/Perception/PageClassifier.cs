@@ -53,7 +53,11 @@ public sealed class PageClassifier
         var id = 0;
         foreach (var line in ocr.Lines)
         {
-            var kind = LooksLikeLink(line.Text) ? CandidateKind.Link : CandidateKind.Button;
+            var kind = LooksLikeLink(line.Text)
+                ? CandidateKind.Link
+                : LooksLikeButton(line.Text)
+                    ? CandidateKind.Button
+                    : CandidateKind.Text;
             yield return new CandidateElement($"ocr-{id++}", kind, line.Text, line.Bounds, line.Confidence, "ocr");
         }
     }
@@ -63,6 +67,21 @@ public sealed class PageClassifier
         || text.Contains("www.", StringComparison.OrdinalIgnoreCase)
         || text.Contains("read more", StringComparison.OrdinalIgnoreCase)
         || text.Contains("learn more", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeButton(string text)
+    {
+        if (text.Length > 48)
+        {
+            return false;
+        }
+
+        var signals = new[]
+        {
+            "ok", "close", "continue", "enter", "skip", "not now", "no thanks", "accept",
+            "yes", "next", "submit", "search", "login", "sign in", "start"
+        };
+        return signals.Any(signal => text.Contains(signal, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string BuildVisibleText(string title, OcrResult ocr, IReadOnlyList<CandidateElement> uiaCandidates)
     {
