@@ -1,6 +1,6 @@
 # PageWalkerLocal Handoff
 
-Date: 2026-05-18 21:10:28 +02:00
+Date: 2026-05-18 23:08:19 +02:00
 Repository: `guvity/page-walker-local`
 Working branch: `codex/phase-2-fix-ocr-runtime-auto-models`
 Base branch: `codex/phase-2-real-ocr-llm`
@@ -11,6 +11,7 @@ This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 
 - Added read-only model discovery for RapidOCR ONNX sets and LLamaSharp GGUF models.
 - Added ONNX Runtime native diagnostics and runtime permission diagnostics.
+- Added app-local MSVC runtime DLL packaging to fix ONNX Runtime native load failures on target machines without a suitable VC++ runtime.
 - Added `--model-discovery-test` and `--ocr-self-test`.
 - Expanded writable runtime directories under `%LOCALAPPDATA%\PageWalkerLocal\`.
 - Updated the Windows x64 GitHub Actions workflow to run on `codex/**`, print native DLLs, fail if `onnxruntime*.dll` is missing, and run the new self-tests.
@@ -40,6 +41,8 @@ This branch keeps the Phase 2 architecture and focuses on runtime robustness:
 - `src/PageWalkerLocal/Brain/LocalLlmBrain.cs`
 - `src/PageWalkerLocal/Diagnostics/DecisionLogWriter.cs`
 - `src/PageWalkerLocal/Diagnostics/HtmlReportWriter.cs`
+- `src/PageWalkerLocal/Diagnostics/NativeDependencyDiagnostics.cs`
+- `src/PageWalkerLocal/Diagnostics/RuntimePermissionDiagnostics.cs`
 - `src/PageWalkerLocal/Program.cs`
 
 ## OCR Model Discovery
@@ -105,12 +108,15 @@ Selection prefers `qwen2.5-0.5b`, then `qwen2.5`, `smollm`, `tinyllama`, and qua
 - relevant `PATH` entries;
 - whether `onnxruntime.dll` exists in the output root;
 - found `onnxruntime*.dll` files under output/current directory;
+- found app-local MSVC runtime DLLs such as `msvcp140*.dll`, `vcruntime140*.dll`, and `concrt140*.dll`;
 - readability of found DLL files;
 - whether `Microsoft.ML.OnnxRuntime` is loaded;
 - whether `new Microsoft.ML.OnnxRuntime.SessionOptions()` succeeds;
 - exception type, message, HResult, and stack trace on failure.
 
 When RapidOCR init fails because ONNX Runtime native initialization failed, the log now says this usually means `onnxruntime.dll` or a native dependency could not load and points at VC++ Redistributable x64, bundled DLLs, permissions, and CPU/OS compatibility.
+
+The 2026-05-18 target-machine log showed OCR models were found/readable and `onnxruntime.dll` existed/readable, but `SessionOptions` still failed with `DllNotFoundException` and `0x8007045A`. That points at a missing or incompatible transitive native dependency, most likely the MSVC runtime. The workflow now copies the x64 `Microsoft.VC143.CRT` DLLs into the artifact root next to `PageWalkerLocal.exe` and fails the build if `msvcp140.dll`, `vcruntime140.dll`, or `vcruntime140_1.dll` are absent.
 
 ## Read-only Program Directory
 
@@ -166,16 +172,16 @@ Both OCR and UIA are unavailable; perception is limited to window title and stat
 
 Local `dotnet build` could not run in this Codex environment because only the .NET runtime is installed and no SDK is available. `git diff --check` passed locally, and the branch was validated through GitHub Actions.
 
-GitHub Actions validation succeeded:
+Latest GitHub Actions validation succeeded:
 
-- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26054563925`
+- Workflow run: `https://github.com/guvity/page-walker-local/actions/runs/26060437512`
 - Job: `Publish portable win-x64 folder`
 - Result: success
-- Validated code commit: `85797436a992ef8474154e2ee30d9a658db8f133`
+- Validated code commit: `8d9080055ef60df466f6ae561a58eb7152500541`
 - Artifact: `PageWalkerLocal-win-x64`
-- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26054563925/artifacts/7066874892`
-- Artifact size: `100670176` bytes
-- Artifact SHA256 digest: `affe1dbcbee0b52c05dc1306f4aadc3618ae90964162010367403576f5c9121c`
+- Artifact URL: `https://github.com/guvity/page-walker-local/actions/runs/26060437512/artifacts/7069155951`
+- Artifact size: `101393185` bytes
+- Artifact SHA256 digest: `867b32c04e81daf5abd84fa26964b5b119cf43aff36fc5dc605efcc3c3304a55`
 
 Workflow checks completed:
 
@@ -183,6 +189,7 @@ Workflow checks completed:
 - `dotnet publish` self-contained `win-x64`: success
 - native DLL listing: success
 - `onnxruntime*.dll` artifact check: success
+- app-local MSVC runtime copy/check: success
 - `PageWalkerLocal.exe --model-discovery-test`: success
 - `PageWalkerLocal.exe --ocr-self-test`: success
 - artifact upload: success
@@ -192,12 +199,16 @@ Native DLLs confirmed in artifact logs:
 - `onnxruntime.dll` - `14718776` bytes
 - `onnxruntime_providers_shared.dll` - `21856` bytes
 - `SkiaSharp.dll` - `490016` bytes
+- `msvcp140.dll` - `557728` bytes
+- `vcruntime140.dll` - `124544` bytes
+- `vcruntime140_1.dll` - `49792` bytes
+- additional MSVC CRT companion DLLs: `concrt140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll`, `msvcp140_atomic_wait.dll`, `msvcp140_codecvt_ids.dll`, `vcruntime140_cor3.dll`, `vcruntime140_threads.dll`
 
-OCR self-test selected the bundled/published RapidOCR v5 model set under `artifacts\PageWalkerLocal-win-x64\models\v5`, confirmed all four files readable, `SessionOptions` succeeded, RapidOCR initialized with custom models, and one tiny bitmap OCR call completed with text length `15` and line count `1`.
+OCR self-test selected the bundled/published RapidOCR v5 model set under `artifacts\PageWalkerLocal-win-x64\models\v5`, confirmed all four files readable, confirmed app-local MSVC runtime files readable, `SessionOptions` succeeded, RapidOCR initialized with custom models, and one tiny bitmap OCR call completed with text length `15` and line count `1`.
 
 ## Remaining Work and Risks
 
-- Confirm target Windows machines have VC++ Redistributable x64 if ONNX Runtime native init fails.
+- If ONNX Runtime still fails on a target machine with the new artifact, inspect the logged app-local MSVC runtime DLLs and then check OS/CPU compatibility or corrupted system VC++ runtime state.
 - Runtime OCR quality and Chromium UIA behavior still need live Windows desktop/RDP validation.
 - `ModelDiscovery` is deterministic but heuristic; unusual OCR model naming may still require explicit paths.
 - No unit tests exist yet for model selection scoring, permission probes, or CLI exit code behavior.
